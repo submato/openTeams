@@ -150,7 +150,21 @@ function makeRunRecorder(wsId, runId, base = {}) {
 
 function ensureDir(d) { fs.mkdirSync(d, { recursive: true }); return d; }
 function readJson(p, fb) { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fb; } }
-function writeJson(p, o) { ensureDir(path.dirname(p)); fs.writeFileSync(p, JSON.stringify(o, null, 2)); }
+// Atomic write: serialize to a sibling temp file, then rename over the target.
+// A crash/kill mid-write leaves the destination as the old complete version
+// (or the new one) — never a truncated file that readJson would silently drop.
+function writeJson(p, o) {
+  ensureDir(path.dirname(p));
+  const data = JSON.stringify(o, null, 2);
+  const tmp = `${p}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, data);
+    fs.renameSync(tmp, p);
+  } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+    throw e;
+  }
+}
 function uid(name) {
   const base = (name || "ws").toLowerCase().replace(/[^a-z0-9一-龥]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "ws";
   return `${base}-${Math.random().toString(36).slice(2, 6)}`;
