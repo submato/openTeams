@@ -181,7 +181,7 @@ function show(view) {
   if (RESTORABLE_VIEWS.includes(view)) { try { localStorage.setItem("activeView", view); } catch {} }
   $$(".view").forEach((v) => v.classList.toggle("active", v.dataset.view === view));
   $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.view === view));
-  if (view === "chat") renderChat();
+  if (view === "chat") { renderChat(); focusComposer(); }
   if (view === "board") renderBoard();
   if (view === "schedule") renderSchedule();
   if (view === "agents") renderAgents();
@@ -213,7 +213,7 @@ function bindChat() {
   // Persist the unsent draft so a reload/crash/navigation never loses what was typed.
   ta.addEventListener("input", () => { autoGrow(); saveChatDraft(); });
   restoreChatDraft();
-  $("#newSession").onclick = async () => { await api.ceoSessionCreate(); await renderChat(); };
+  $("#newSession").onclick = async () => { await api.ceoSessionCreate(); await renderChat(); focusComposer(); };
   $("#chatPanelToggle").onclick = () => {
     const c = localStorage.getItem("chatPanelCollapsed") === "1";
     localStorage.setItem("chatPanelCollapsed", c ? "0" : "1");
@@ -258,6 +258,18 @@ function applyChatPrefs() {
   layout.classList.toggle("side-right", localStorage.getItem("chatPanelSide") === "right");
 }
 function autoGrow() { const t = $("#chatInput"); t.style.height = "auto"; t.style.height = Math.min(180, t.scrollHeight) + "px"; }
+// Put the cursor in the composer when entering the chat or starting a new
+// session, so the user can type right away instead of having to click in first.
+// Never steal focus while the detail modal is open (it has its own editor).
+function focusComposer() {
+  const detail = $("#detail");
+  if (detail && !detail.classList.contains("hidden")) return;
+  const ta = $("#chatInput");
+  if (!ta) return;
+  requestAnimationFrame(() => {
+    try { ta.focus(); const n = ta.value.length; ta.setSelectionRange(n, n); } catch {}
+  });
+}
 function saveChatDraft() { try { localStorage.setItem("chatDraft", $("#chatInput").value || ""); } catch {} }
 function clearChatDraft() { try { localStorage.removeItem("chatDraft"); } catch {} }
 function restoreChatDraft() {
