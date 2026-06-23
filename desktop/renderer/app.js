@@ -274,10 +274,18 @@ async function renderChat() {
 }
 function maybeOfferRetry() {
   const last = chatHistory[chatHistory.length - 1];
-  if (!last || last.role !== "user") return;
+  if (!last) return;
+  // Offer a one-click resend either when the last message is an unanswered user
+  // message, or when the turn ended in an error — the error text promises the
+  // message is preserved and "可重发", so surface an actual control to do so.
+  const isErr = last.role === "system" && /^出错/.test(last.text || "");
+  if (last.role !== "user" && !isErr) return;
+  const lastUser = chatHistory.slice().reverse().find((m) => m.role === "user");
+  if (!lastUser || !(lastUser.text || "").trim()) return;
   const row = el("div", "msg system");
-  row.innerHTML = '上条消息没有收到回复。<button class="btn ghost sm" style="margin-left:8px">重试</button>';
-  row.querySelector("button").onclick = () => { $("#chatInput").value = last.text; chatSend(); };
+  const label = isErr ? "上一条没发成功。" : "上条消息没有收到回复。";
+  row.innerHTML = esc(label) + '<button class="btn ghost sm" style="margin-left:8px">重发</button>';
+  row.querySelector("button").onclick = () => { $("#chatInput").value = lastUser.text; chatSend(); };
   $("#chatLog").appendChild(row);
 }
 function chatWelcome() {
