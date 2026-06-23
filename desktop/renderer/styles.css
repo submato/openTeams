@@ -128,7 +128,14 @@ code { background: var(--surface-3); padding: 2px 7px; border-radius: 5px; font-
 .chat-sessions { width: 244px; flex-shrink: 0; background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
 .chat-layout.side-right .chat-sessions { border-right: none; border-left: 1px solid var(--line); }
 .chat-head .icon-btn svg { width: 17px; height: 17px; }
-.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+/* "jump to latest" — appears only when the user scrolls up away from the bottom
+   (streaming respects scroll position, so this is the way back to live tokens). */
+.chat-jump { position: absolute; right: 22px; bottom: 104px; z-index: 5; display: none; align-items: center; gap: 6px; padding: 7px 13px 7px 11px; background: var(--card); border: 1px solid var(--line-2); border-radius: 999px; color: var(--accent); font-size: 12.5px; font-weight: 600; cursor: pointer; box-shadow: var(--shadow-sm); transition: .12s; }
+.chat-jump[hidden] { display: none; }
+.chat-jump.show { display: inline-flex; }
+.chat-jump:hover { border-color: var(--accent); background: var(--accent-soft); }
+.chat-jump svg { width: 15px; height: 15px; }
 .new-session-btn { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 14px 14px 6px; padding: 10px; background: var(--card); border: 1px solid var(--line-2); border-radius: var(--r-sm); color: var(--text); font-weight: 600; font-size: 13px; cursor: pointer; transition: .12s; }
 .new-session-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .new-session-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }

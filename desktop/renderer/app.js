@@ -186,8 +186,16 @@ function bindChat() {
     applyChatPrefs();
   };
   applyChatPrefs();
+  const log = $("#chatLog");
+  if (log) log.addEventListener("scroll", updateChatJump);
+  $("#chatJump").onclick = () => { const l = $("#chatLog"); l.scrollTop = l.scrollHeight; updateChatJump(); };
   $$("#modeSeg .seg").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
   setMode(chatMode);
+}
+// Show the "jump to latest" affordance only while scrolled up away from the bottom.
+function updateChatJump() {
+  const btn = $("#chatJump");
+  if (btn) btn.classList.toggle("show", !chatNearBottom());
 }
 function setMode(mode) {
   chatMode = mode;
@@ -418,6 +426,7 @@ function handleCeoEvent(ev) {
       $("#chatStatus").textContent = (chatInflight.statusLabel || "思考中") + `… ${sec}s`;
     }
     if (stick) $("#chatLog").scrollTop = $("#chatLog").scrollHeight;
+    updateChatJump();
   }
   if (ev.kind === "status" || ev.kind === "doc" || ev.kind === "delegate") refreshIdeas();
 }
