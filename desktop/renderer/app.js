@@ -136,6 +136,9 @@ let detailIdeaId = null;
 let detailDocDirty = false;
 
 const isView = (v) => { const e = document.querySelector('.view[data-view="' + v + '"]'); return e && e.classList.contains("active"); };
+// Views worth restoring after a reload/relaunch. "editor" is excluded: it only
+// makes sense with a live `editing` selection that doesn't survive a reload.
+const RESTORABLE_VIEWS = ["chat", "board", "schedule", "agents", "skills", "runs", "objectives", "usage", "settings"];
 
 // ---------------------------------------------------------------- init
 async function init() {
@@ -162,13 +165,20 @@ async function init() {
   await refreshIdeas();
   const interrupted = IDEAS.filter((i) => i.status === "interrupted").length;
   if (interrupted > 0) toast(`有 ${interrupted} 个任务上次被中断，可在看板「已中断」里继续或重跑。`, "warn", 8000);
-  show("chat");
+  // Reopen the last view (mirrors the persisted chat mode / draft / panel prefs)
+  // so a reload or self-heal relaunch doesn't yank the user back to chat.
+  let startView = "chat";
+  try { const v = localStorage.getItem("activeView"); if (RESTORABLE_VIEWS.includes(v)) startView = v; } catch {}
+  show(startView);
 }
 
 function bindNav() {
   $$(".nav-item").forEach((n) => (n.onclick = () => show(n.dataset.view)));
 }
 function show(view) {
+  // Remember the last real view so a reload/relaunch can reopen it. The transient
+  // "editor" view is skipped — it has no meaning without a live selection.
+  if (RESTORABLE_VIEWS.includes(view)) { try { localStorage.setItem("activeView", view); } catch {} }
   $$(".view").forEach((v) => v.classList.toggle("active", v.dataset.view === view));
   $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.view === view));
   if (view === "chat") renderChat();
