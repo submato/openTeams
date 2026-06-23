@@ -373,6 +373,23 @@ function cleanupRuntimeResources() {
 }
 
 app.whenReady().then(async () => {
+  // Smoke test: prove the build is loadable, then exit. Used by the self-edit
+  // safety gate (Slice 2) and to test boots. It must NOT touch the watchdog
+  // state — a gate runs this inside a throwaway worktree on a CANDIDATE commit,
+  // and we never want that recorded as "last known good".
+  if (SMOKE_TEST) {
+    try {
+      const s = await loadStore();
+      if (app.isPackaged) s.setRoot(dataRoot());
+      console.log("[smoke-test] ok");
+      app.exit(0);
+    } catch (e) {
+      console.error("[smoke-test] failed:", e && e.message);
+      app.exit(1);
+    }
+    return;
+  }
+
   // --- Self-heal watchdog: FIRST thing, before any self-editable code loads. ---
   // In dev (running from source) a bad self-edit can crash boot; the watchdog
   // rolls the source back to the last healthy commit and relaunches. Rollback is
@@ -388,22 +405,6 @@ app.whenReady().then(async () => {
     console.log("[selfheal] rolled back to last-good; relaunching");
     app.relaunch();
     app.exit(0);
-    return;
-  }
-
-  // Smoke test: boot far enough to prove the build is loadable, then exit 0.
-  // Used by the self-edit safety gate (Slice 2) and to test the watchdog.
-  if (SMOKE_TEST) {
-    try {
-      const s = await loadStore();
-      if (app.isPackaged) s.setRoot(dataRoot());
-      markBootHealthy();
-      console.log("[smoke-test] ok");
-      app.exit(0);
-    } catch (e) {
-      console.error("[smoke-test] failed:", e && e.message);
-      app.exit(1);
-    }
     return;
   }
 
