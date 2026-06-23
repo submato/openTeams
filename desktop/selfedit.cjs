@@ -174,4 +174,66 @@ function discard(repo, dir, branch) {
   try { git(repo, ["branch", "-D", branch]); } catch {}
 }
 
-module.exports = { createCandidate, changedFiles, diff, runGate, runSmoke, commitCandidate, apply, discard, worktreesRoot };
+// ── OS-level hard isolation ────────────────────────────────────────────────
+// Prompt rules + path sanitizing tell the agent to stay in the worktree, but
+// nothing physically stops a confused agent from writing the LIVE source via an
+// absolute path. lockSource() makes the live SOURCE TREE read-only at the OS
+// level for the duration of a self-edit run, so any such write fails with
+// EACCES. Only source dirs are locked — the app's runtime data lives at the
+// repo root (gitignored) and stays writable, as does node_modules/.git and the
+// worktree itself (a separate dir under tmp).
+const PROTECTED_SOURCE = ["desktop", "src", "package.json"];
+const LOCK_SKIP = new Set(["node_modules", ".git"]);
+const SRCLOCK_FILE = ".selfedit-srclock.json";
+
+function collectSourcePaths(repo, rel, acc) {
+  const abs = path.join(repo, rel);
+  let st;
+  try { st = fs.lstatSync(abs); } catch { return; }
+  if (st.isSymbolicLink()) return;            // never follow symlinks (e.g. linked node_modules)
+  if (st.isDirectory()) {
+    if (LOCK_SKIP.has(path.basename(abs))) return;
+    acc.push(abs);                            // dir before children (pre-order)
+    let names = [];
+    try { names = fs.readdirSync(abs); } catch { return; }
+    for (const n of names) collectSourcePaths(repo, path.join(rel, n), acc);
+  } else if (st.isFile()) {
+    acc.push(abs);
+  }
+}
+
+/**
+ * Strip write bits from the live source tree. Records original modes to a lock
+ * file so a crash mid-run can be recovered (the next lock/unlock restores them).
+ * Returns the map of restored modes.
+ */
+function lockSource(repo) {
+  unlockSource(repo);                         // recover from any prior crash first
+  const acc = [];
+  for (const rel of PROTECTED_SOURCE) collectSourcePaths(repo, rel, acc);
+  const saved = {};
+  for (const abs of acc) {
+    try {
+      const m = fs.statSync(abs).mode & 0o777;
+      const next = m & ~0o222;                // clear u/g/o write
+      if (next !== m) { fs.chmodSync(abs, next); saved[abs] = m; }
+    } catch { /* best effort */ }
+  }
+  try { fs.writeFileSync(path.join(repo, SRCLOCK_FILE), JSON.stringify(saved)); } catch {}
+  return saved;
+}
+
+/** Restore write bits recorded by lockSource (idempotent; safe if never locked). */
+function unlockSource(repo) {
+  const lf = path.join(repo, SRCLOCK_FILE);
+  let saved = null;
+  try { saved = JSON.parse(fs.readFileSync(lf, "utf8")); } catch { saved = null; }
+  if (saved && typeof saved === "object") {
+    for (const [abs, mode] of Object.entries(saved)) {
+      try { fs.chmodSync(abs, mode); } catch {}
+    }
+  }
+  try { fs.unlinkSync(lf); } catch {}
+}
+
+module.exports = { createCandidate, changedFiles, diff, runGate, runSmoke, commitCandidate, apply, discard, worktreesRoot, lockSource, unlockSource };

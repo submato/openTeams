@@ -436,6 +436,13 @@ app.whenReady().then(async () => {
     return;
   }
 
+  // Defensive: a self-edit that crashed mid-run may have left the live source
+  // tree read-only (OS-level hard isolation). Restore writability before the
+  // watchdog runs — a `git reset --hard` rollback can't overwrite locked files.
+  if (!app.isPackaged) {
+    try { require("./selfedit.cjs").unlockSource(DEV_ROOT); } catch {}
+  }
+
   // --- Self-heal watchdog: FIRST thing, before any self-editable code loads. ---
   // In dev (running from source) a bad self-edit can crash boot; the watchdog
   // rolls the source back to the last healthy commit and relaunches. Rollback is

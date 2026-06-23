@@ -68,6 +68,28 @@ export async function runAgentTurn(agent, task, context, cwd, opts = {}) {
   const onStream = typeof opts.onStream === "function" ? opts.onStream : null;
   if (!apiKey) return { ok: false, status: "no_key", text: "", error: "Missing CURSOR_API_KEY", meta: {} };
 
+  // Bounded retry for TRANSIENT SDK failures. Read-only (plan) turns are always
+  // safe to retry; agent turns retry only when the run errored with no output
+  // (so we never double-apply real edits). Caller may override via opts.retries.
+  const maxAttempts = 1 + (Number.isInteger(opts.retries) ? opts.retries : (mode === "plan" ? 2 : 1));
+  let lastFail = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const r = await runAgentTurnOnce(agent, task, context, cwd, opts, apiKey, mode, onStream);
+    if (r.ok) return r;
+    lastFail = r;
+    const transient = r.status === "error" || r.status === "startup_error" || r.status === "exception";
+    const safeToRetry = mode === "plan" || !(r.text && r.text.trim().length);
+    if (attempt < maxAttempts && transient && safeToRetry) {
+      onStream && onStream({ kind: "thinking", text: `（瞬时错误，重试 ${attempt}/${maxAttempts - 1}：${r.error || r.status}）` });
+      await new Promise((res) => setTimeout(res, 800 * attempt));
+      continue;
+    }
+    break;
+  }
+  return lastFail;
+}
+
+async function runAgentTurnOnce(agent, task, context, cwd, opts, apiKey, mode, onStream) {
   const prompt = buildPrompt(agent, task, context, mode, opts.skillContext || "");
   const startedAt = Date.now();
 
@@ -112,11 +134,17 @@ export async function runAgentTurn(agent, task, context, cwd, opts = {}) {
 
     const text = result.result ?? liveText ?? "";
     if (result.status === "cancelled") return { ok: false, status: "cancelled", text, error: "已取消", meta };
-    if (result.status !== "finished") return { ok: false, status: result.status, text, error: `run status: ${result.status}`, meta };
+    if (result.status !== "finished") {
+      // Surface whatever detail the SDK attached so "error" isn't a black box.
+      const detail = result.error?.message || result.error || result.message
+        || (result.reason ? String(result.reason) : "")
+        || (result.result ? String(result.result).slice(0, 300) : "");
+      return { ok: false, status: result.status, text, error: `run status: ${result.status}${detail ? " — " + detail : ""}`, meta };
+    }
     return { ok: true, status: "finished", text, meta };
   } catch (err) {
     const meta = { durationMs: Date.now() - startedAt, model: agent.model, mode, usage: null };
-    if (err instanceof CursorAgentError) return { ok: false, status: "startup_error", text: "", error: `${err.message} (retryable=${err.isRetryable})`, meta };
+    if (err instanceof CursorAgentError) return { ok: false, status: err.isRetryable ? "startup_error" : "fatal", text: "", error: `${err.message} (retryable=${err.isRetryable})`, meta };
     return { ok: false, status: "exception", text: "", error: err.message, meta };
   }
 }

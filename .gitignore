@@ -31,3 +31,7 @@ crew.json
 settings.json
 workspaces.json
 selfheal.json
+selfedits/
+objectives/
+objectives.json
+.selfedit-srclock.json

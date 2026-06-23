@@ -1492,6 +1492,14 @@ export function cancelSelfEdit() {
 }
 
 function buildSelfEditBrief(goal) {
+  // SAFETY: the crew runs in an isolated worktree (cwd), but the strategist may
+  // have baked the LIVE repo's absolute path into the goal. Rewrite any such
+  // absolute reference to a relative path so workers can't escape the worktree
+  // and edit the running source directly.
+  goal = String(goal || "")
+    .split(SRC_REPO + path.sep).join("")
+    .split(SRC_REPO + "/").join("")
+    .split(SRC_REPO).join(".");
   return `你正在修改"你自己"——这个 AI 团队桌面应用的源码。当前工作目录就是这个应用的代码仓库（一个隔离副本：你的改动不会影响正在运行的程序，要通过安全审查后人工点"应用"才会生效）。
 
 技术栈：Electron 桌面应用。
@@ -1511,6 +1519,8 @@ ${goal}
 2. 绝对禁止修改安全机制文件：desktop/selfheal.cjs、desktop/selfedit.cjs。
 3. 不要改 .gitignore、不要动任何用户数据、不要删除依赖、不要运行 npm install 或下载东西。
 4. 改动要小而聚焦，只做实现目标所必需的修改。直接编辑源文件（不要只在报告里贴代码片段）。
+5. 只能使用相对当前工作目录的相对路径（如 desktop/store.mjs）。绝对禁止使用绝对路径（如 /Users/... 这类指向真实仓库的路径），也绝对禁止编辑当前工作目录之外的任何文件——否则会绕过隔离、改坏正在运行的程序。
+6. 禁止运行任何会长期阻塞、不自动退出的命令（例如 \`npm start\`、\`electron .\` 启动应用并停在那里）；语法/启动校验交给安全闸自动完成，你不需要自己启动应用。
 
 完成后用一两句话说明你改了哪些文件、为什么这样改。`;
 }
@@ -1543,6 +1553,9 @@ export async function startSelfEdit(goal, apiKey, onEvent) {
   selfEditCtrl = ctrl;
 
   try {
+    // OS-level hard isolation: make the LIVE source read-only so the crew
+    // physically cannot edit the running program (only the worktree is writable).
+    try { selfEdit.lockSource(SRC_REPO); } catch {}
     const run = await kickoff(buildSelfEditBrief(goal), {
       manager, workers, reviewer,
       cwd: cand.dir, mode: "agent", apiKey,
@@ -1592,6 +1605,7 @@ export async function startSelfEdit(goal, apiKey, onEvent) {
     emit({ type: "selfedit-done", status: rec.status, error: err.message });
     return selfEditSummary(writeSelfEdit(rec));
   } finally {
+    try { selfEdit.unlockSource(SRC_REPO); } catch {}
     if (selfEditCtrl === ctrl) selfEditCtrl = null;
   }
 }
@@ -1730,9 +1744,12 @@ async function strategistTurn(objective, description, expectedOutput, apiKey) {
 
 async function proposeNextStep(objective, journal, apiKey) {
   const hist = summarizeJournal(journal) || "（还没有任何尝试）";
+  const pathRule = objective.kind === "self-edit"
+    ? `\n- 任务里引用文件时只用相对项目根目录的相对路径（如 desktop/store.mjs），绝对不要写绝对路径（/Users/... 之类），因为执行会发生在一个隔离副本里。`
+    : "";
   const j = await strategistTurn(
     objective,
-    `你在为一个长期目标做"下一步规划"。北极星目标：\n"""\n${objective.northStar}\n"""\n\n到目前为止的历程（最近几轮）：\n${hist}\n\n请决定"下一步要做的、单一且具体的任务"。要求：\n- 一次只提一个能在一轮内完成、且能被验证的具体任务（不要给宽泛方向）。\n- 若北极星已达成，返回 done=true。\n- 若反复失败、判断此路不通，返回 giveUp=true 并说明原因。`,
+    `你在为一个长期目标做"下一步规划"。北极星目标：\n"""\n${objective.northStar}\n"""\n\n到目前为止的历程（最近几轮）：\n${hist}\n\n请决定"下一步要做的、单一且具体的任务"。要求：\n- 一次只提一个能在一轮内完成、且能被验证的具体任务（不要给宽泛方向）。\n- 若北极星已达成，返回 done=true。\n- 若反复失败、判断此路不通，返回 giveUp=true 并说明原因。${pathRule}`,
     `只返回 JSON：{ "task": "下一步具体任务", "rationale": "为什么是这一步", "done": false, "giveUp": false }`,
     apiKey
   );
