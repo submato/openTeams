@@ -173,7 +173,9 @@ function bindChat() {
     // Ignore Enter while an IME is composing (e.g. selecting a Chinese candidate).
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); chatSend(); }
   });
-  ta.addEventListener("input", autoGrow);
+  // Persist the unsent draft so a reload/crash/navigation never loses what was typed.
+  ta.addEventListener("input", () => { autoGrow(); saveChatDraft(); });
+  restoreChatDraft();
   $("#newSession").onclick = async () => { await api.ceoSessionCreate(); await renderChat(); };
   $("#chatPanelToggle").onclick = () => {
     const c = localStorage.getItem("chatPanelCollapsed") === "1";
@@ -186,8 +188,16 @@ function bindChat() {
     applyChatPrefs();
   };
   applyChatPrefs();
+  const log = $("#chatLog");
+  if (log) log.addEventListener("scroll", updateChatJump);
+  $("#chatJump").onclick = () => { const l = $("#chatLog"); l.scrollTop = l.scrollHeight; updateChatJump(); };
   $$("#modeSeg .seg").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
   setMode(chatMode);
+}
+// Show the "jump to latest" affordance only while scrolled up away from the bottom.
+function updateChatJump() {
+  const btn = $("#chatJump");
+  if (btn) btn.classList.toggle("show", !chatNearBottom());
 }
 function setMode(mode) {
   chatMode = mode;
@@ -210,6 +220,15 @@ function applyChatPrefs() {
   layout.classList.toggle("side-right", localStorage.getItem("chatPanelSide") === "right");
 }
 function autoGrow() { const t = $("#chatInput"); t.style.height = "auto"; t.style.height = Math.min(180, t.scrollHeight) + "px"; }
+function saveChatDraft() { try { localStorage.setItem("chatDraft", $("#chatInput").value || ""); } catch {} }
+function clearChatDraft() { try { localStorage.removeItem("chatDraft"); } catch {} }
+function restoreChatDraft() {
+  let d = "";
+  try { d = localStorage.getItem("chatDraft") || ""; } catch {}
+  if (!d) return;
+  const ta = $("#chatInput");
+  if (ta && !ta.value) { ta.value = d; autoGrow(); }
+}
 function groupSessions(sessions) {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -270,10 +289,18 @@ async function renderChat() {
 }
 function maybeOfferRetry() {
   const last = chatHistory[chatHistory.length - 1];
-  if (!last || last.role !== "user") return;
+  if (!last) return;
+  // Offer a one-click resend either when the last message is an unanswered user
+  // message, or when the turn ended in an error — the error text promises the
+  // message is preserved and "可重发", so surface an actual control to do so.
+  const isErr = last.role === "system" && /^出错/.test(last.text || "");
+  if (last.role !== "user" && !isErr) return;
+  const lastUser = chatHistory.slice().reverse().find((m) => m.role === "user");
+  if (!lastUser || !(lastUser.text || "").trim()) return;
   const row = el("div", "msg system");
-  row.innerHTML = '上条消息没有收到回复。<button class="btn ghost sm" style="margin-left:8px">重试</button>';
-  row.querySelector("button").onclick = () => { $("#chatInput").value = last.text; chatSend(); };
+  const label = isErr ? "上一条没发成功。" : "上条消息没有收到回复。";
+  row.innerHTML = esc(label) + '<button class="btn ghost sm" style="margin-left:8px">重发</button>';
+  row.querySelector("button").onclick = () => { $("#chatInput").value = lastUser.text; chatSend(); };
   $("#chatLog").appendChild(row);
 }
 function chatWelcome() {
@@ -335,7 +362,7 @@ async function cancelChat() {
 async function chatSend() {
   const msg = $("#chatInput").value.trim();
   if (!msg || chatInflight) return;
-  $("#chatInput").value = ""; autoGrow();
+  $("#chatInput").value = ""; autoGrow(); clearChatDraft();
   const sendHistory = chatHistory.slice();
   addMsg("user", msg);
   chatHistory.push({ role: "user", text: msg });
@@ -418,6 +445,7 @@ function handleCeoEvent(ev) {
       $("#chatStatus").textContent = (chatInflight.statusLabel || "思考中") + `… ${sec}s`;
     }
     if (stick) $("#chatLog").scrollTop = $("#chatLog").scrollHeight;
+    updateChatJump();
   }
   if (ev.kind === "status" || ev.kind === "doc" || ev.kind === "delegate") refreshIdeas();
 }
