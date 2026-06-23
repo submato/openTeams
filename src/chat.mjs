@@ -169,7 +169,13 @@ export async function chatTurn(agent, history, message, cwd, opts = {}) {
   const apiKey = opts.apiKey || process.env.CURSOR_API_KEY;
   if (!apiKey) return { ok: false, text: "", error: "Missing CURSOR_API_KEY" };
 
-  const convo = (history || []).map((m) => `${m.role === "user" ? "User" : agent.name}: ${m.text}`).join("\n");
+  // Bound the prompt: keep only the recent turns and cap each message, mirroring
+  // ceoChatTurn. Without this an Agents-page chat grows the prompt without limit
+  // as it gets longer, eventually overflowing context and slowing every turn.
+  const convo = (history || [])
+    .slice(-10)
+    .map((m) => `${m.role === "user" ? "User" : agent.name}: ${(m.text || "").slice(0, 1200)}`)
+    .join("\n");
   const prompt = `${systemFor(agent, "plan")}
 
 # Conversation so far
