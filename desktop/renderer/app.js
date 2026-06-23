@@ -73,11 +73,24 @@ function mdToHtml(src) {
     blocks.push(`<div class="md-codewrap"><button class="md-copy" type="button" title="复制代码">复制</button><pre class="md-code"><code>${body}</code></pre></div>`);
     return Z + (blocks.length - 1) + Z;
   });
-  const inline = (s) => s
+  // Autolink bare http(s) URLs, but never touch URLs already inside an <a> or
+  // <code> span: split on those (capturing-group keeps them at odd indices) and
+  // only linkify the plain-text segments. Trailing punctuation is peeled so
+  // "(see http://x)" / "http://x." link cleanly.
+  const linkifyBare = (s) => s
+    .split(/(<a\b[^>]*>.*?<\/a>|<code>.*?<\/code>)/g)
+    .map((seg, i) => (i % 2 ? seg : seg.replace(/https?:\/\/[^\s<]+/g, (m) => {
+      let url = m, tail = "";
+      const tm = url.match(/[.,;:!?)\]'"]+$/);
+      if (tm) { tail = tm[0]; url = url.slice(0, -tail.length); }
+      return `<a href="${url}" target="_blank">${url}</a>` + tail;
+    })))
+    .join("");
+  const inline = (s) => linkifyBare(s
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank">$1</a>'));
   const lines = text.split("\n");
   const codeRe = new RegExp("^" + Z + "\\d+" + Z + "$");
   let html = "", list = null;
