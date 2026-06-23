@@ -1116,7 +1116,28 @@ function renderSkillGrid() {
   let items = SKILLS;
   if (skillCat !== "all") items = items.filter((s) => (s.source || "其它") === skillCat);
   if (skillQuery) items = items.filter((s) => (s.name + " " + (s.description || "")).toLowerCase().includes(skillQuery));
-  if (!items.length) { grid.innerHTML = '<div class="muted">没有匹配的技能。</div>'; return; }
+  if (!items.length) {
+    if (!SKILLS.length) {
+      // No skills at all (never synced or none available) — guide to sync, not "no match".
+      const empty = el("div", "muted skill-empty", "还没有技能。点击右上角的「同步技能」从工作区拉取。");
+      const act = el("button", "btn ghost sm", "立即同步");
+      act.onclick = () => $("#skillsSync").click();
+      empty.appendChild(act);
+      grid.appendChild(empty);
+    } else {
+      // Have skills but the current filter/search excludes them all — offer to clear.
+      const empty = el("div", "muted skill-empty", "没有匹配的技能。");
+      const act = el("button", "btn ghost sm", "清除筛选");
+      act.onclick = () => {
+        skillQuery = ""; skillCat = "all";
+        const box = $("#skillsSearch"); if (box) box.value = "";
+        renderSkills();
+      };
+      empty.appendChild(act);
+      grid.appendChild(empty);
+    }
+    return;
+  }
   for (const s of items) {
     const card = el("div", "skill-card");
     card.innerHTML =
