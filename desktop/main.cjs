@@ -5,12 +5,16 @@ const { app, BrowserWindow, ipcMain, shell, dialog } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
+const { createWatchdog } = require("./selfheal.cjs");
 
 const DEV_ROOT = path.resolve(__dirname, "..");
 const USER_DATA_DIR = "ai-team";
+const SMOKE_TEST = process.argv.includes("--smoke-test");
 let store = null;
 let router = null;
 let win = null;
+let watchdog = null;
+let bootHealthy = false;
 const watchers = new Map();   // wsId -> fs.FSWatcher
 
 if (process.env.AI_TEAM_DISABLE_GPU === "1") app.disableHardwareAcceleration();
@@ -116,6 +120,15 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
   });
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
+  // Renderer painted + main-process startup survived ⇒ this boot is healthy.
+  // Tell the watchdog so it records this commit as last-known-good.
+  win.webContents.once("did-finish-load", markBootHealthy);
+}
+
+function markBootHealthy() {
+  if (bootHealthy) return;
+  bootHealthy = true;
+  try { watchdog && watchdog.markHealthy(); } catch {}
 }
 
 // Watch a workspace dir and notify the renderer when files change (debounced).
@@ -360,6 +373,40 @@ function cleanupRuntimeResources() {
 }
 
 app.whenReady().then(async () => {
+  // --- Self-heal watchdog: FIRST thing, before any self-editable code loads. ---
+  // In dev (running from source) a bad self-edit can crash boot; the watchdog
+  // rolls the source back to the last healthy commit and relaunches. Rollback is
+  // disabled for the packaged .app (can't git-reset an asar).
+  watchdog = createWatchdog({
+    repo: DEV_ROOT,
+    statePath: path.join(app.getPath("userData"), "selfheal.json"),
+    enabled: !app.isPackaged,
+    log: (m) => console.log("[selfheal]", m),
+  });
+  const boot = watchdog.beginBoot();
+  if (boot.rollback) {
+    console.log("[selfheal] rolled back to last-good; relaunching");
+    app.relaunch();
+    app.exit(0);
+    return;
+  }
+
+  // Smoke test: boot far enough to prove the build is loadable, then exit 0.
+  // Used by the self-edit safety gate (Slice 2) and to test the watchdog.
+  if (SMOKE_TEST) {
+    try {
+      const s = await loadStore();
+      if (app.isPackaged) s.setRoot(dataRoot());
+      markBootHealthy();
+      console.log("[smoke-test] ok");
+      app.exit(0);
+    } catch (e) {
+      console.error("[smoke-test] failed:", e && e.message);
+      app.exit(1);
+    }
+    return;
+  }
+
   migrateLegacyUserData();
   loadEnv();
   registerIpc();
