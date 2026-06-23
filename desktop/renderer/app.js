@@ -122,7 +122,14 @@ let WS = [];
 let chatHistory = [];
 let chatLive = null;
 let chatInflight = null;        // { statusLabel, stream, startedAt } — survives tab switches
-let chatMode = "auto";          // "auto" = 自动判断 | "chat" = 只聊天 | "task" = 派活拟计划
+// Restore the last-used mode so a reload/relaunch keeps the user's choice
+// (mirrors the persisted draft + panel prefs); fall back to "auto" if unset
+// or somehow invalid.
+let chatMode = (() => {
+  let m = "auto";
+  try { m = localStorage.getItem("chatMode") || "auto"; } catch {}
+  return ["auto", "chat", "task"].includes(m) ? m : "auto";
+})();          // "auto" = 自动判断 | "chat" = 只聊天 | "task" = 派活拟计划
 let activeSessionId = null;
 let editing = null;
 let detailIdeaId = null;
@@ -221,6 +228,7 @@ function updateChatJump() {
 }
 function setMode(mode) {
   chatMode = mode;
+  try { localStorage.setItem("chatMode", mode); } catch {}
   $$("#modeSeg .seg").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
   if (mode === "task") {
     $("#modeHint").textContent = "锁定派活：这条一定拟成执行文档 → 看板「待执行」";
