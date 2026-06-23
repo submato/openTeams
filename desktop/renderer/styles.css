@@ -405,6 +405,11 @@ textarea.tall { min-height: 120px; }
 .md code { background: var(--surface-3); padding: 1.5px 6px; border-radius: 5px; font-family: var(--mono); font-size: 12px; }
 .md pre.md-code { background: #0f1117; color: #e6e7ee; border-radius: var(--r-sm); padding: 13px 15px; margin: 10px 0; overflow-x: auto; }
 .md pre.md-code code { background: none; padding: 0; color: inherit; font-size: 12px; line-height: 1.55; }
+.md-codewrap { position: relative; }
+.md-copy { position: absolute; top: 9px; right: 9px; padding: 3px 9px; font-size: 11px; line-height: 1.3; border-radius: 6px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08); color: #cfd2de; cursor: pointer; opacity: 0; transition: opacity .15s, background .15s; }
+.md-codewrap:hover .md-copy, .md-copy:focus { opacity: 1; }
+.md-copy:hover { background: rgba(255,255,255,.16); }
+.md-copy.done { color: #7ee0a8; border-color: rgba(126,224,168,.4); opacity: 1; }
 .md blockquote { border-left: 3px solid var(--line-2); margin: 8px 0; padding: 2px 0 2px 13px; color: var(--muted); }
 .md table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; }
 .md th, .md td { border: 1px solid var(--line-2); padding: 7px 11px; text-align: left; vertical-align: top; }

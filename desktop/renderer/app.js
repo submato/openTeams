@@ -21,6 +21,25 @@ function toast(msg, kind = "info", ms = 5000) {
   setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
 }
 
+// Copy a fenced code block's raw text. textContent decodes the HTML-escaped
+// source back to the original code (entities → characters).
+async function onCodeCopyClick(e) {
+  const btn = e.target.closest ? e.target.closest(".md-copy") : null;
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const code = btn.parentElement && btn.parentElement.querySelector("pre code");
+  const text = code ? code.textContent : "";
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    const prev = btn.textContent;
+    btn.textContent = "已复制 ✓";
+    btn.classList.add("done");
+    setTimeout(() => { btn.textContent = prev; btn.classList.remove("done"); }, 1400);
+  } catch { toast("复制失败", "error"); }
+}
+
 function rel(ts) {
   if (!ts) return "";
   const d = Date.now() - ts, m = Math.floor(d / 60000);
@@ -49,7 +68,9 @@ function mdToHtml(src) {
   let text = esc(src || "");
   const blocks = [];
   text = text.replace(/```([\w.+-]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    blocks.push(`<pre class="md-code"><code>${code.replace(/\n$/, "")}</code></pre>`);
+    const body = code.replace(/\n$/, "");
+    // Wrap fenced blocks so a one-click "复制" affordance can grab the raw code.
+    blocks.push(`<div class="md-codewrap"><button class="md-copy" type="button" title="复制代码">复制</button><pre class="md-code"><code>${body}</code></pre></div>`);
     return Z + (blocks.length - 1) + Z;
   });
   const inline = (s) => s
@@ -122,6 +143,9 @@ async function init() {
   SCHEDULE = await api.getSchedule();
 
   bindNav(); bindChat(); bindBoard(); bindSchedule(); bindAgents(); bindEditor(); bindSettings(); bindDetail(); bindSkills(); bindObjectives();
+  // Single delegated handler so every markdown-rendered code block (chat, docs,
+  // reports, artifacts) gets a working copy button without re-binding per render.
+  document.addEventListener("click", onCodeCopyClick);
   api.onCeoEvent(handleCeoEvent);
   api.onCrewEvent(handleCrewEvent);
   api.onSchedEvent(handleSchedEvent);
