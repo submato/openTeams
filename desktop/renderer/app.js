@@ -824,10 +824,14 @@ function splitCsvLine(line) {
   return out;
 }
 function csvPreview(src) {
-  const rows = (src || "").trim().split(/\r?\n/).slice(0, 30).map((line) => splitCsvLine(line).map((c) => c.trim()));
+  const CAP = 30;
+  const lines = (src || "").trim().split(/\r?\n/);
+  const rows = lines.slice(0, CAP).map((line) => splitCsvLine(line).map((c) => c.trim()));
   if (!rows.length) return `<div class="muted artifact-pad">空 CSV</div>`;
   const head = rows[0], body = rows.slice(1);
-  return `<div class="artifact-table-wrap"><table class="artifact-table"><thead><tr>${head.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  // The preview is capped; say so rather than silently dropping rows.
+  const more = lines.length > CAP ? `<div class="muted artifact-pad">仅显示前 ${CAP} 行，共 ${lines.length} 行。</div>` : "";
+  return `<div class="artifact-table-wrap"><table class="artifact-table"><thead><tr>${head.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>${more}`;
 }
 function artifactIcon(kind) {
   if (kind === "md") return "MD";
