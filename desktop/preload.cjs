@@ -78,6 +78,15 @@ contextBridge.exposeInMainWorld("api", {
   skillsGet: (id) => ipcRenderer.invoke("skills:get", id),
   skillsSync: () => ipcRenderer.invoke("skills:sync"),
 
+  // Self-edit (the app modifies its own source, gated + diff-reviewed)
+  selfEditList: () => ipcRenderer.invoke("selfedit:list"),
+  selfEditGet: (id) => ipcRenderer.invoke("selfedit:get", id),
+  selfEditDirty: () => ipcRenderer.invoke("selfedit:dirty"),
+  selfEditStart: (goal) => ipcRenderer.invoke("selfedit:start", goal),
+  selfEditCancel: () => ipcRenderer.invoke("selfedit:cancel"),
+  selfEditApply: (id) => ipcRenderer.invoke("selfedit:apply", id),
+  selfEditDiscard: (id) => ipcRenderer.invoke("selfedit:discard", id),
+
   // Per-workspace chat history (project view reference; legacy)
   chatHistory: (wsId) => ipcRenderer.invoke("chat:history", wsId),
   chatSaveHistory: (wsId, history) => ipcRenderer.invoke("chat:save", wsId, history),

@@ -121,7 +121,7 @@ async function init() {
   $("#setWsBase").value = SETTINGS.workspaceBase || "~";
   SCHEDULE = await api.getSchedule();
 
-  bindNav(); bindChat(); bindBoard(); bindSchedule(); bindAgents(); bindEditor(); bindSettings(); bindDetail(); bindSkills();
+  bindNav(); bindChat(); bindBoard(); bindSchedule(); bindAgents(); bindEditor(); bindSettings(); bindDetail(); bindSkills(); bindSelfEdit();
   api.onCeoEvent(handleCeoEvent);
   api.onCrewEvent(handleCrewEvent);
   api.onSchedEvent(handleSchedEvent);
@@ -146,6 +146,7 @@ function show(view) {
   if (view === "agents") renderAgents();
   if (view === "skills") renderSkills();
   if (view === "runs") renderRuns();
+  if (view === "selfedit") renderSelfEdit();
   if (view === "usage") renderUsage();
 }
 
@@ -555,6 +556,7 @@ async function discardIdea(id) {
 }
 
 function handleCrewEvent(ev) {
+  if (ev && ev.selfEditId) { seHandleEvent(ev); return; }
   const txt = document.querySelector(".kcard.running .kcard-live-txt");
   if (txt) {
     if (ev.type === "plan-start") txt.textContent = "指挥官规划中…";
@@ -783,6 +785,7 @@ function bindSchedule() {
   $("#autoDailyAt").onchange = saveAuto;
   $("#autoSource").onchange = () => { syncAutoSourceRows(); saveAuto(); };
   $("#autoPrompt").onchange = saveAuto;
+  $("#autoCard").onchange = saveAuto;
   $("#autoRunNow").onclick = async () => {
     const btn = $("#autoRunNow"); btn.disabled = true; btn.textContent = "派活中…";
     const r = await api.runScheduleNow();
@@ -797,7 +800,23 @@ function syncAutoModeRows() {
   $("#autoDailyWrap").classList.toggle("hidden", !daily);
 }
 function syncAutoSourceRows() {
-  $("#autoPromptRow").classList.toggle("hidden", $("#autoSource").value !== "prompt");
+  const src = $("#autoSource").value;
+  $("#autoPromptRow").classList.toggle("hidden", src !== "prompt");
+  $("#autoCardRow").classList.toggle("hidden", src !== "card");
+  if (src === "card") populateAutoCard();
+}
+function populateAutoCard() {
+  const sel = $("#autoCard");
+  const prev = SCHEDULE.cardId || sel.value || "";
+  const cards = (IDEAS || []).filter((i) => i.status !== "pending_confirm");
+  if (!cards.length) {
+    sel.innerHTML = `<option value="">看板里还没有可执行的卡片</option>`;
+    return;
+  }
+  sel.innerHTML = cards.map((i) => {
+    const label = `[${STATUS_CN[i.status] || i.status}] ${(i.text || "").slice(0, 40)}`;
+    return `<option value="${i.id}" ${i.id === prev ? "selected" : ""}>${esc(label)}</option>`;
+  }).join("");
 }
 async function saveAuto() {
   SCHEDULE = await api.setSchedule({
@@ -807,11 +826,13 @@ async function saveAuto() {
     dailyAt: $("#autoDailyAt").value || "09:00",
     source: $("#autoSource").value,
     prompt: $("#autoPrompt").value.trim(),
+    cardId: $("#autoCard").value || "",
   });
   reflectSchedDot(); renderAutoStatus();
 }
 async function renderSchedule() {
   SCHEDULE = await api.getSchedule();
+  IDEAS = await api.ideasList();   // keep the card picker in sync with the board
   $("#autoEnabled").checked = !!SCHEDULE.enabled;
   $("#autoMode").value = SCHEDULE.mode || "interval";
   $("#autoEveryHours").value = SCHEDULE.everyHours || 6;
@@ -819,6 +840,7 @@ async function renderSchedule() {
   $("#autoSource").value = SCHEDULE.source || "ideas";
   $("#autoPrompt").value = SCHEDULE.prompt || "";
   syncAutoModeRows(); syncAutoSourceRows();
+  if (SCHEDULE.source === "card") $("#autoCard").value = SCHEDULE.cardId || "";
   renderAutoStatus(); renderAutoLog(); reflectSchedDot();
 }
 function renderAutoStatus() {
@@ -1052,6 +1074,171 @@ function bindSettings() {
     setTimeout(() => { btn.textContent = t; }, 1400);
   };
   $("#editCrewLink").onclick = () => show("agents");
+}
+
+// ---------------------------------------------------------------- self-edit (自进化)
+let SELFEDITS = [];
+let seDetailId = null;
+let seRunning = false;
+let seProgress = [];
+
+const SE_STATUS = {
+  running: ["运行中", "run"], ready: ["待应用", "ready"], applied: ["已应用", "done"],
+  rejected: ["被安全闸拒绝", "bad"], failed: ["失败", "bad"], empty: ["无改动", "muted"],
+  cancelled: ["已取消", "muted"], discarded: ["已丢弃", "muted"],
+};
+const SE_CHECK_CN = { syntax: "语法", smoke: "冒烟启动", protected: "安全文件", lint: "lint" };
+
+function bindSelfEdit() {
+  $("#seStart").onclick = startSelfEditUI;
+  $("#seCancel").onclick = async () => { await api.selfEditCancel(); toast("正在取消自改…", "info"); };
+}
+
+async function renderSelfEdit() {
+  const res = await api.selfEditList();
+  const available = !!(res && res.available);
+  SELFEDITS = (res && res.items) || [];
+  $("#selfeditUnavailable").classList.toggle("hidden", available);
+  $("#selfeditBody").classList.toggle("hidden", !available);
+  if (!available) return;
+  renderSeList();
+  if (seDetailId && SELFEDITS.some((c) => c.id === seDetailId)) renderSeDetail(seDetailId);
+}
+
+function seChip(s) {
+  const [label, cls] = SE_STATUS[s] || [s, "muted"];
+  return `<span class="se-chip ${cls}">${esc(label)}</span>`;
+}
+
+function renderSeList() {
+  const host = $("#seList");
+  if (!SELFEDITS.length) { host.innerHTML = `<div class="se-list-empty">还没有自改记录。</div>`; return; }
+  host.innerHTML = "";
+  SELFEDITS.forEach((c) => {
+    const item = el("div", "se-item" + (c.id === seDetailId ? " active" : ""));
+    item.innerHTML = `<div class="se-item-goal">${esc((c.goal || "").slice(0, 90))}</div>
+      <div class="se-item-meta">${seChip(c.status)}<span class="se-item-time">${rel(c.createdAt)}</span></div>`;
+    item.onclick = () => { seDetailId = c.id; renderSeList(); renderSeDetail(c.id); };
+    host.appendChild(item);
+  });
+}
+
+function pushSeProgress(line) {
+  seProgress.push(line);
+  const host = $("#seProgress");
+  if (!host) return;
+  host.innerHTML = seProgress.slice(-14).map((p) => `<div class="se-prog-line">${esc(p)}</div>`).join("");
+  host.scrollTop = host.scrollHeight;
+}
+
+function seHandleEvent(ev) {
+  if (ev.type === "plan-start") pushSeProgress("指挥官规划中…");
+  else if (ev.type === "plan-done") pushSeProgress("已拆解 " + ((ev.tasks && ev.tasks.length) || 0) + " 个任务");
+  else if (ev.type === "task-start") pushSeProgress((ev.agent || "") + "：" + ((ev.task && ev.task.title) || ""));
+  else if (ev.type === "task-stream") { if (ev.kind === "tool") pushSeProgress("· 调用 " + (ev.name || "")); }
+  else if (ev.type === "task-done") pushSeProgress("✓ 完成一个任务");
+  else if (ev.type === "review-start") pushSeProgress("审查中…");
+  else if (ev.type === "selfedit-gate-start") pushSeProgress("跑安全闸：语法 + 冒烟启动…");
+  else if (ev.type === "selfedit-done") {
+    pushSeProgress(ev.status === "ready" ? "✓ 通过安全闸，待你审查应用" : ("结束：" + ((SE_STATUS[ev.status] || [ev.status])[0])));
+    renderSelfEdit();
+  } else if (ev.type === "error") pushSeProgress("✗ " + (ev.error || "出错"));
+}
+
+async function startSelfEditUI() {
+  const goal = $("#seGoal").value.trim();
+  if (!goal) { toast("先描述要让它改什么", "warn"); return; }
+  if (seRunning) { toast("已有自改在进行中", "warn"); return; }
+  seRunning = true; seProgress = [];
+  $("#seStart").classList.add("hidden");
+  $("#seCancel").classList.remove("hidden");
+  $("#selfeditDot").classList.add("on");
+  pushSeProgress("已创建隔离副本，团队开始工作…");
+  let res;
+  try { res = await api.selfEditStart(goal); }
+  finally {
+    seRunning = false;
+    $("#seStart").classList.remove("hidden");
+    $("#seCancel").classList.add("hidden");
+    $("#selfeditDot").classList.remove("on");
+  }
+  if (!res || !res.ok) {
+    toast("自改失败：" + ((res && res.error) || "未知错误"), "error", 8000);
+    pushSeProgress("✗ " + ((res && res.error) || "失败"));
+    return;
+  }
+  const cand = res.candidate;
+  $("#seGoal").value = "";
+  seDetailId = cand.id;
+  await renderSelfEdit();
+  renderSeDetail(cand.id);
+  if (cand.status === "ready") toast("通过安全闸，去审 diff 后应用 ✓", "info", 7000);
+  else if (cand.status === "rejected") toast("改动被安全闸拒绝，详情里有原因", "warn", 7000);
+  else if (cand.status === "empty") toast("工程师没有产生任何改动", "warn");
+}
+
+function renderSeDiff(patch) {
+  return esc(patch).split("\n").map((line) => {
+    let cls = "";
+    if (line.startsWith("+") && !line.startsWith("+++")) cls = "add";
+    else if (line.startsWith("-") && !line.startsWith("---")) cls = "del";
+    else if (line.startsWith("@@")) cls = "hunk";
+    else if (line.startsWith("diff ") || line.startsWith("index ") || line.startsWith("+++") || line.startsWith("---")) cls = "meta";
+    return `<span class="dl ${cls}">${line || " "}</span>`;
+  }).join("\n");
+}
+
+async function renderSeDetail(id) {
+  const c = await api.selfEditGet(id);
+  const host = $("#seDetail");
+  if (!c) { host.innerHTML = `<div class="se-empty">候选不存在。</div>`; return; }
+  const files = (c.diff && c.diff.files) || [];
+  let html = `<div class="se-detail-head">
+    <div class="se-detail-goal">${esc(c.goal)}</div>
+    <div class="se-detail-sub">${seChip(c.status)}<span class="sub">${rel(c.createdAt)}</span></div>
+  </div>`;
+
+  if (c.gate && c.gate.checks) {
+    html += `<div class="se-gate">` + c.gate.checks.map((ck) =>
+      `<span class="se-gate-badge ${ck.ok ? "ok" : "bad"}" title="${esc(ck.detail || "")}">${ck.ok ? "✓" : "✗"} ${esc(SE_CHECK_CN[ck.name] || ck.name)}</span>`
+    ).join("") + `</div>`;
+    const fails = c.gate.checks.filter((ck) => !ck.ok);
+    if (fails.length) html += `<div class="se-gate-detail">` +
+      fails.map((f) => `<div>✗ ${esc(SE_CHECK_CN[f.name] || f.name)}：${esc(f.detail || "")}</div>`).join("") + `</div>`;
+  }
+  if (c.error) html += `<div class="se-error">${esc(c.error)}</div>`;
+
+  html += `<div class="se-actions">`;
+  if (c.status === "ready") html += `<button class="btn primary" id="seApply">✓ 应用这次改动</button>`;
+  if (["ready", "rejected", "empty", "failed"].includes(c.status)) html += `<button class="btn ghost" id="seDiscard">丢弃</button>`;
+  if (c.status === "applied") html += `<span class="se-applied-note">已合并进源码（commit ${esc((c.appliedCommit || "").slice(0, 7))}）。重启 App 后生效。</span>`;
+  html += `</div>`;
+
+  if (files.length) html += `<div class="se-files-head">改动文件（${files.length}）</div><div class="se-files">` +
+    files.map((f) => `<div class="se-file"><span class="se-file-st">${esc(f.status || "M")}</span>${esc(f.file)}</div>`).join("") + `</div>`;
+  if (c.diff && c.diff.patch) html += `<div class="se-files-head">代码改动（diff）</div><pre class="se-diff">${renderSeDiff(c.diff.patch)}</pre>`;
+  if (c.review) html += `<div class="se-files-head">审查意见</div><div class="se-review">${esc(c.review)}</div>`;
+
+  host.innerHTML = html;
+  const ab = $("#seApply"); if (ab) ab.onclick = () => applySelfEditUI(c.id);
+  const db = $("#seDiscard"); if (db) db.onclick = () => discardSelfEditUI(c.id);
+}
+
+async function applySelfEditUI(id) {
+  if (!confirm("把这次改动合并进 App 源码？\n你未提交的改动会被自动暂存再恢复。应用后需重启 App 才生效。")) return;
+  const res = await api.selfEditApply(id);
+  if (!res || !res.ok) { toast("应用失败：" + ((res && res.error) || "未知"), "error", 9000); return; }
+  toast("已应用，重启 App 后生效（commit " + ((res.commit || "").slice(0, 7)) + "）", "info", 9000);
+  await renderSelfEdit();
+  renderSeDetail(id);
+}
+
+async function discardSelfEditUI(id) {
+  if (!confirm("丢弃这次改动？隔离副本会被删除。")) return;
+  await api.selfEditDiscard(id);
+  toast("已丢弃", "info");
+  if (seDetailId === id) { seDetailId = null; $("#seDetail").innerHTML = `<div class="se-empty">已丢弃。</div>`; }
+  await renderSelfEdit();
 }
 
 init();

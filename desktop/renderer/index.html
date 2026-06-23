@@ -45,6 +45,10 @@
         <svg viewBox="0 0 24 24" class="ic"><path d="M3 12a9 9 0 1 0 3-7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
         <span>运行记录</span>
       </button>
+      <button class="nav-item" data-view="selfedit">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M12 2a4 4 0 0 0-4 4v1H6a2 2 0 0 0-2 2v3a4 4 0 0 0 4 4h0"/><path d="M12 22a4 4 0 0 0 4-4v-1h2a2 2 0 0 0 2-2v-3a4 4 0 0 0-4-4"/><circle cx="12" cy="12" r="2"/></svg>
+        <span>自进化</span><span id="selfeditDot" class="sched-dot"></span>
+      </button>
       <button class="nav-item" data-view="usage">
         <svg viewBox="0 0 24 24" class="ic"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
         <span>用量</span>
@@ -164,7 +168,11 @@
         </div>
         <div class="set-row">
           <div class="set-label">派什么活</div>
-          <select id="autoSource"><option value="ideas">取看板里最早的待执行卡片</option><option value="prompt">每次都做同一件事</option></select>
+          <select id="autoSource"><option value="ideas">取看板里最早的待执行卡片</option><option value="card">指定看板里的一张卡片</option><option value="prompt">每次都做同一件事</option></select>
+        </div>
+        <div id="autoCardRow" class="set-row hidden">
+          <div><div class="set-label">选择卡片</div><div class="set-help">每次自动跑都执行这张指定的看板卡片</div></div>
+          <select id="autoCard"></select>
         </div>
         <div id="autoPromptRow" class="set-row hidden">
           <div><div class="set-label">固定任务</div><div class="set-help">每次自动跑都把这段话交给 CEO，拟文档并执行</div></div>
@@ -265,6 +273,33 @@
       <div class="runs-layout">
         <div id="missionsList" class="runs-list"></div>
         <div id="missionReport" class="run-report">选择左侧一次运行查看完整产出。</div>
+      </div>
+    </section>
+
+    <!-- ============ 自进化（自改源码） ============ -->
+    <section class="view" data-view="selfedit">
+      <header class="vhead">
+        <div><h1>自进化</h1><p class="sub">让团队修改 App 自己的源码。改动在隔离副本里进行，过安全闸后给你审 diff，手动应用才生效。</p></div>
+      </header>
+      <div id="selfeditUnavailable" class="se-unavailable hidden">
+        当前不是源码（开发）模式，无法自改。打包版没有 git 仓库，仅在以源码运行时可用。
+      </div>
+      <div id="selfeditBody" class="se-layout">
+        <div class="se-left panel">
+          <label class="fl">想让它改什么</label>
+          <textarea id="seGoal" class="se-goal" placeholder="例如：在看板卡片上显示该任务最近一次运行的耗时；或：把产物分类的判断逻辑收敛到一个函数里并加注释。"></textarea>
+          <div class="se-compose-actions">
+            <button id="seStart" class="btn primary">▶ 开始自改</button>
+            <button id="seCancel" class="btn ghost hidden">■ 取消</button>
+          </div>
+          <div id="seProgress" class="se-progress"></div>
+          <div class="se-divider"></div>
+          <div class="se-list-head">历史候选</div>
+          <div id="seList" class="se-list"></div>
+        </div>
+        <div id="seDetail" class="se-detail panel">
+          <div class="se-empty">在左边给一个目标并开始，或选择一个候选查看它改了什么。</div>
+        </div>
       </div>
     </section>
 

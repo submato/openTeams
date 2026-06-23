@@ -278,6 +278,25 @@ function registerIpc() {
   ipcMain.handle("skills:get", async (_e, id) => (await loadStore()).getSkill(id));
   ipcMain.handle("skills:sync", async () => (await loadStore()).syncCursorSkills());
 
+  // Self-edit (Slice 2): the crew edits the app's own source on an isolated
+  // worktree; the gate validates it; the human applies the diff. Live events
+  // on crew:event so it reuses the existing run timeline UI.
+  ipcMain.handle("selfedit:list", async () => (await loadStore()).listSelfEdits());
+  ipcMain.handle("selfedit:get", async (_e, id) => (await loadStore()).getSelfEdit(id));
+  ipcMain.handle("selfedit:dirty", async () => (await loadStore()).selfEditGitDirty());
+  ipcMain.handle("selfedit:start", async (_e, goal) => {
+    if (!process.env.CURSOR_API_KEY) return { ok: false, error: "缺少 CURSOR_API_KEY（在 ai-team/.env 设置）" };
+    const s = await loadStore();
+    try { return { ok: true, candidate: await s.startSelfEdit(goal, process.env.CURSOR_API_KEY, (evt) => send("crew:event", evt)) }; }
+    catch (err) { send("crew:event", { type: "error", error: err.message }); return { ok: false, error: err.message }; }
+  });
+  ipcMain.handle("selfedit:cancel", async () => (await loadStore()).cancelSelfEdit());
+  ipcMain.handle("selfedit:apply", async (_e, id) => {
+    const s = await loadStore();
+    try { return s.applySelfEdit(id); } catch (err) { return { ok: false, error: err.message }; }
+  });
+  ipcMain.handle("selfedit:discard", async (_e, id) => (await loadStore()).discardSelfEdit(id));
+
   // Legacy 1:1 chat (Agents page)
   ipcMain.handle("chat:send", async (_e, agentId, history, message) => {
     if (!process.env.CURSOR_API_KEY) return { ok: false, error: "Missing CURSOR_API_KEY" };

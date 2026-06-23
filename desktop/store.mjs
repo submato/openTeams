@@ -16,6 +16,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { SEED_AGENTS, AVAILABLE_TOOLS, AVAILABLE_MODELS } from "../src/agents.mjs";
 import { kickoff } from "../src/crew.mjs";
+import selfEdit from "./selfedit.cjs";
 import { chatTurn, ceoChatTurn, ceoExecDoc } from "../src/chat.mjs";
 import { decideCeoAction, classifyWorkspace } from "../src/router.mjs";
 
@@ -511,7 +512,8 @@ const SCHEDULE_DEFAULTS = {
   mode: "interval",     // "interval" = 每隔 N 小时 | "daily" = 每天定点
   everyHours: 6,
   dailyAt: "09:00",
-  source: "ideas",      // "ideas" = 取点子清单 | "prompt" = 固定任务
+  source: "ideas",      // "ideas" = 取点子清单 | "card" = 指定卡片 | "prompt" = 固定任务
+  cardId: "",           // when source === "card": the board card to run each tick
   prompt: "",
   lastRunAt: 0,
   nextRunAt: 0,
@@ -567,6 +569,15 @@ export async function runScheduleOnce(apiKey, onCrewEvent, onStream, manual = fa
     const idea = await planIdea(brief, apiKey, onStream);
     confirmIdea(idea.id);   // autonomous task: skip human confirm, queue it directly
     ideaId = idea.id;
+  } else if (sched.source === "card") {
+    // Run one SPECIFIC board card on every tick (a standing task chosen by hand).
+    const pick = getIdeas().find((i) => i.id === sched.cardId);
+    if (!pick) {
+      appendScheduleLog({ type: "skip", msg: "指定的卡片不存在（可能已删除），请重新选择" });
+      bump();
+      return { ok: true, skipped: true, reason: "指定卡片不存在" };
+    }
+    ideaId = pick.id;
   } else {
     // Only run cards the human already confirmed (待执行).
     const pending = getIdeas().filter((i) => i.status === "pending");
@@ -1426,4 +1437,207 @@ export async function runCrew(wsId, idea, onEvent, apiKey, opts = {}) {
   } finally {
     controllers.delete(wsId);
   }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// SELF-EDIT (Slice 2): the crew edits the app's OWN source, safely.
+//
+// Flow: create an isolated git worktree of THIS repo → run the crew there with
+// cwd = the worktree (so the live app is untouched) → run the safety gate
+// (node --check + electron --smoke-test + protected-file check) → keep the diff
+// as a reviewable candidate. The human clicks "apply" to merge it; nothing ever
+// reaches the live tree automatically. Only works in dev (source is a git repo);
+// the packaged .app has no repo, so self-edit is disabled there.
+// ──────────────────────────────────────────────────────────────────────────
+const SRC_REPO = path.resolve(__dirname, "..");
+// The autonomous editor must NEVER touch its own safety net.
+const SELFEDIT_PROTECTED = ["desktop/selfheal.cjs", "desktop/selfedit.cjs"];
+const selfEditPath = (id) => path.join(ROOT, "selfedits", `${id}.json`);
+let selfEditCtrl = null;
+
+export function selfEditAvailable() {
+  try {
+    execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: SRC_REPO, stdio: ["ignore", "pipe", "ignore"] });
+    return true;
+  } catch { return false; }
+}
+
+function readSelfEdit(id) { return readJson(selfEditPath(id), null); }
+function writeSelfEdit(rec) { rec.updatedAt = Date.now(); writeJson(selfEditPath(rec.id), rec); return rec; }
+
+// List view drops the (potentially large) patch text; getSelfEdit returns it.
+function selfEditSummary(rec) {
+  const diff = rec.diff ? { files: rec.diff.files, patchBytes: (rec.diff.patch || "").length } : null;
+  return { ...rec, diff };
+}
+export function listSelfEdits() {
+  ensure();
+  const dir = path.join(ROOT, "selfedits");
+  if (!fs.existsSync(dir)) return { available: selfEditAvailable(), items: [] };
+  const items = fs.readdirSync(dir).filter((f) => f.endsWith(".json"))
+    .map((f) => readJson(path.join(dir, f), null)).filter(Boolean)
+    .map(selfEditSummary)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return { available: selfEditAvailable(), items };
+}
+export function getSelfEdit(id) { ensure(); return readSelfEdit(id); }
+
+export function cancelSelfEdit() {
+  if (!selfEditCtrl) return false;
+  selfEditCtrl.cancelled = true;
+  try { selfEditCtrl.current?.cancel?.(); } catch {}
+  return true;
+}
+
+function buildSelfEditBrief(goal) {
+  return `你正在修改"你自己"——这个 AI 团队桌面应用的源码。当前工作目录就是这个应用的代码仓库（一个隔离副本：你的改动不会影响正在运行的程序，要通过安全审查后人工点"应用"才会生效）。
+
+技术栈：Electron 桌面应用。
+- 主进程：desktop/main.cjs（CommonJS）
+- 数据与业务逻辑：desktop/store.mjs（ESM）
+- 多 agent 引擎：src/*.mjs
+- 前端：desktop/renderer/（index.html / app.js / styles.css，原生 JS，无框架）
+- IPC 暴露：desktop/preload.cjs
+
+要实现的目标：
+"""
+${goal}
+"""
+
+硬性约束（违反会被安全闸直接拒绝）：
+1. 改动后必须能通过 \`node --check\`（语法正确）并能 Electron 冒烟启动（应用可加载）。
+2. 绝对禁止修改安全机制文件：desktop/selfheal.cjs、desktop/selfedit.cjs。
+3. 不要改 .gitignore、不要动任何用户数据、不要删除依赖、不要运行 npm install 或下载东西。
+4. 改动要小而聚焦，只做实现目标所必需的修改。直接编辑源文件（不要只在报告里贴代码片段）。
+
+完成后用一两句话说明你改了哪些文件、为什么这样改。`;
+}
+
+export async function startSelfEdit(goal, apiKey, onEvent) {
+  ensure();
+  goal = (goal || "").trim();
+  if (!goal) throw new Error("请先描述要让它改什么");
+  if (!selfEditAvailable()) throw new Error("自改只在源码（开发）模式可用：当前目录不是 git 仓库（打包版无法自改）");
+  if (selfEditCtrl) throw new Error("已有一个自改任务在进行中，请先等它结束");
+  const { manager, reviewer, workers } = resolveCrew();
+  if (!manager) throw new Error("没有可用的指挥官（在员工库/编队里配置）");
+  if (!workers.length) throw new Error("没有可用的执行者（在编队里勾选）");
+
+  const id = `se-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const emit = (ev) => { try { onEvent && onEvent({ selfEditId: id, ...ev, at: ev.at || Date.now() }); } catch {} };
+  emit({ type: "selfedit-start", goal });
+
+  let cand;
+  try { cand = selfEdit.createCandidate(SRC_REPO, id); }
+  catch (e) { throw new Error("创建隔离副本失败：" + e.message); }
+
+  let rec = writeSelfEdit({
+    id, goal, status: "running", branch: cand.branch, dir: cand.dir, base: cand.base,
+    gate: null, diff: null, review: "", results: [], error: "", candidateCommit: "",
+    appliedCommit: "", createdAt: Date.now(), updatedAt: Date.now(),
+  });
+
+  const ctrl = { cancelled: false, current: null };
+  selfEditCtrl = ctrl;
+
+  try {
+    const run = await kickoff(buildSelfEditBrief(goal), {
+      manager, workers, reviewer,
+      cwd: cand.dir, mode: "agent", apiKey,
+      onEvent: (ev) => emit(ev),
+      store: await sdkStore(),
+      onRun: (r) => { ctrl.current = r; },
+      isCancelled: () => ctrl.cancelled,
+      skillProvider: ({ agent, task, idea: it, context }) =>
+        buildSkillContextForTurn({ agent, task, idea: it || goal, context }),
+    });
+    rec.review = run.review || "";
+    rec.results = (run.results || []).map((r) => ({
+      agent: r.agent, title: r.title, ok: !!r.ok, output: String(r.output || "").slice(0, 4000),
+    }));
+
+    emit({ type: "selfedit-gate-start" });
+    const d = selfEdit.diff(cand.dir);
+    rec.diff = d;
+
+    if (!d.files.length) {
+      rec.status = "empty"; rec.error = "工程师没有产生任何代码改动";
+      try { selfEdit.discard(SRC_REPO, cand.dir, cand.branch); } catch {}
+      emit({ type: "selfedit-done", status: rec.status, error: rec.error });
+      return selfEditSummary(writeSelfEdit(rec));
+    }
+
+    const hitsProtected = d.files.map((f) => f.file).filter((f) => SELFEDIT_PROTECTED.includes(f));
+    const gate = await selfEdit.runGate(cand.dir);
+    if (hitsProtected.length) {
+      gate.checks.unshift({ name: "protected", ok: false, detail: "改动了安全机制文件：" + hitsProtected.join(", ") });
+      gate.ok = false;
+    }
+    rec.gate = gate;
+
+    if (gate.ok) {
+      rec.candidateCommit = selfEdit.commitCandidate(cand.dir, `self-edit: ${goal}`.slice(0, 200));
+      rec.status = "ready";
+    } else {
+      rec.status = "rejected";
+    }
+    emit({ type: "selfedit-done", status: rec.status, gate });
+    return selfEditSummary(writeSelfEdit(rec));
+  } catch (err) {
+    rec.status = ctrl.cancelled ? "cancelled" : "failed";
+    rec.error = err.message;
+    try { selfEdit.discard(SRC_REPO, cand.dir, cand.branch); } catch {}
+    emit({ type: "selfedit-done", status: rec.status, error: err.message });
+    return selfEditSummary(writeSelfEdit(rec));
+  } finally {
+    if (selfEditCtrl === ctrl) selfEditCtrl = null;
+  }
+}
+
+// Uncommitted changes in the LIVE tree block a merge; report them so the UI can
+// offer to stash-and-apply.
+export function selfEditGitDirty() {
+  try {
+    const out = execFileSync("git", ["status", "--porcelain"], { cwd: SRC_REPO, encoding: "utf8" });
+    return out.split("\n").map((l) => l.slice(3).trim()).filter(Boolean);
+  } catch { return []; }
+}
+
+export function applySelfEdit(id) {
+  ensure();
+  const rec = readSelfEdit(id);
+  if (!rec) throw new Error("找不到该自改候选");
+  if (rec.status !== "ready") throw new Error(`该候选当前状态「${rec.status}」不可应用`);
+
+  // Stash the user's uncommitted work so the merge has a clean tree, then restore.
+  const dirty = selfEditGitDirty();
+  let stashed = false;
+  if (dirty.length) {
+    try { execFileSync("git", ["stash", "push", "-m", `selfedit-apply-${id}`], { cwd: SRC_REPO }); stashed = true; }
+    catch (e) { return { ok: false, error: "暂存未提交改动失败：" + e.message }; }
+  }
+  try {
+    const commit = selfEdit.apply(SRC_REPO, rec.branch, `apply self-edit: ${rec.goal}`.slice(0, 200));
+    rec.status = "applied"; rec.appliedCommit = commit; writeSelfEdit(rec);
+    try { selfEdit.discard(SRC_REPO, rec.dir, rec.branch); } catch {}
+    return { ok: true, commit, restart: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  } finally {
+    if (stashed) {
+      try { execFileSync("git", ["stash", "pop"], { cwd: SRC_REPO }); }
+      catch { /* leave the stash for manual recovery; surfaced via selfEditGitDirty next time */ }
+    }
+  }
+}
+
+export function discardSelfEdit(id) {
+  ensure();
+  const rec = readSelfEdit(id);
+  if (!rec) return false;
+  try { selfEdit.discard(SRC_REPO, rec.dir, rec.branch); } catch {}
+  if (["ready", "rejected", "empty", "running", "failed", "cancelled"].includes(rec.status)) {
+    rec.status = "discarded"; writeSelfEdit(rec);
+  }
+  return true;
 }
