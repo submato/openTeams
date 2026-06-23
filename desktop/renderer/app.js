@@ -21,6 +21,25 @@ function toast(msg, kind = "info", ms = 5000) {
   setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
 }
 
+// Copy a fenced code block's raw text. textContent decodes the HTML-escaped
+// source back to the original code (entities → characters).
+async function onCodeCopyClick(e) {
+  const btn = e.target.closest ? e.target.closest(".md-copy") : null;
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const code = btn.parentElement && btn.parentElement.querySelector("pre code");
+  const text = code ? code.textContent : "";
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    const prev = btn.textContent;
+    btn.textContent = "已复制 ✓";
+    btn.classList.add("done");
+    setTimeout(() => { btn.textContent = prev; btn.classList.remove("done"); }, 1400);
+  } catch { toast("复制失败", "error"); }
+}
+
 function rel(ts) {
   if (!ts) return "";
   const d = Date.now() - ts, m = Math.floor(d / 60000);
@@ -49,7 +68,9 @@ function mdToHtml(src) {
   let text = esc(src || "");
   const blocks = [];
   text = text.replace(/```([\w.+-]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    blocks.push(`<pre class="md-code"><code>${code.replace(/\n$/, "")}</code></pre>`);
+    const body = code.replace(/\n$/, "");
+    // Wrap fenced blocks so a one-click "复制" affordance can grab the raw code.
+    blocks.push(`<div class="md-codewrap"><button class="md-copy" type="button" title="复制代码">复制</button><pre class="md-code"><code>${body}</code></pre></div>`);
     return Z + (blocks.length - 1) + Z;
   });
   const inline = (s) => s
@@ -101,7 +122,14 @@ let WS = [];
 let chatHistory = [];
 let chatLive = null;
 let chatInflight = null;        // { statusLabel, stream, startedAt } — survives tab switches
-let chatMode = "auto";          // "auto" = 自动判断 | "chat" = 只聊天 | "task" = 派活拟计划
+// Restore the last-used mode so a reload/relaunch keeps the user's choice
+// (mirrors the persisted draft + panel prefs); fall back to "auto" if unset
+// or somehow invalid.
+let chatMode = (() => {
+  let m = "auto";
+  try { m = localStorage.getItem("chatMode") || "auto"; } catch {}
+  return ["auto", "chat", "task"].includes(m) ? m : "auto";
+})();          // "auto" = 自动判断 | "chat" = 只聊天 | "task" = 派活拟计划
 let activeSessionId = null;
 let editing = null;
 let detailIdeaId = null;
@@ -111,6 +139,9 @@ let cardChatLive = null;
 let cardChatInflight = false;
 
 const isView = (v) => { const e = document.querySelector('.view[data-view="' + v + '"]'); return e && e.classList.contains("active"); };
+// Views worth restoring after a reload/relaunch. "editor" is excluded: it only
+// makes sense with a live `editing` selection that doesn't survive a reload.
+const RESTORABLE_VIEWS = ["chat", "board", "schedule", "agents", "skills", "runs", "objectives", "usage", "settings"];
 
 // ---------------------------------------------------------------- init
 async function init() {
@@ -125,6 +156,9 @@ async function init() {
   SCHEDULE = await api.getSchedule();
 
   bindNav(); bindChat(); bindBoard(); bindSchedule(); bindAgents(); bindEditor(); bindSettings(); bindDetail(); bindSkills(); bindObjectives();
+  // Single delegated handler so every markdown-rendered code block (chat, docs,
+  // reports, artifacts) gets a working copy button without re-binding per render.
+  document.addEventListener("click", onCodeCopyClick);
   api.onCeoEvent(handleCeoEvent);
   api.onCardEvent(handleCardEvent);
   api.onCrewEvent(handleCrewEvent);
@@ -135,13 +169,20 @@ async function init() {
   await refreshIdeas();
   const interrupted = IDEAS.filter((i) => i.status === "interrupted").length;
   if (interrupted > 0) toast(`有 ${interrupted} 个任务上次被中断，可在看板「已中断」里继续或重跑。`, "warn", 8000);
-  show("chat");
+  // Reopen the last view (mirrors the persisted chat mode / draft / panel prefs)
+  // so a reload or self-heal relaunch doesn't yank the user back to chat.
+  let startView = "chat";
+  try { const v = localStorage.getItem("activeView"); if (RESTORABLE_VIEWS.includes(v)) startView = v; } catch {}
+  show(startView);
 }
 
 function bindNav() {
   $$(".nav-item").forEach((n) => (n.onclick = () => show(n.dataset.view)));
 }
 function show(view) {
+  // Remember the last real view so a reload/relaunch can reopen it. The transient
+  // "editor" view is skipped — it has no meaning without a live selection.
+  if (RESTORABLE_VIEWS.includes(view)) { try { localStorage.setItem("activeView", view); } catch {} }
   $$(".view").forEach((v) => v.classList.toggle("active", v.dataset.view === view));
   $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.view === view));
   if (view === "chat") renderChat();
@@ -173,7 +214,9 @@ function bindChat() {
     // Ignore Enter while an IME is composing (e.g. selecting a Chinese candidate).
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); chatSend(); }
   });
-  ta.addEventListener("input", autoGrow);
+  // Persist the unsent draft so a reload/crash/navigation never loses what was typed.
+  ta.addEventListener("input", () => { autoGrow(); saveChatDraft(); });
+  restoreChatDraft();
   $("#newSession").onclick = async () => { await api.ceoSessionCreate(); await renderChat(); };
   $("#chatPanelToggle").onclick = () => {
     const c = localStorage.getItem("chatPanelCollapsed") === "1";
@@ -186,11 +229,20 @@ function bindChat() {
     applyChatPrefs();
   };
   applyChatPrefs();
+  const log = $("#chatLog");
+  if (log) log.addEventListener("scroll", updateChatJump);
+  $("#chatJump").onclick = () => { const l = $("#chatLog"); l.scrollTop = l.scrollHeight; updateChatJump(); };
   $$("#modeSeg .seg").forEach((b) => (b.onclick = () => setMode(b.dataset.mode)));
   setMode(chatMode);
 }
+// Show the "jump to latest" affordance only while scrolled up away from the bottom.
+function updateChatJump() {
+  const btn = $("#chatJump");
+  if (btn) btn.classList.toggle("show", !chatNearBottom());
+}
 function setMode(mode) {
   chatMode = mode;
+  try { localStorage.setItem("chatMode", mode); } catch {}
   $$("#modeSeg .seg").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
   if (mode === "task") {
     $("#modeHint").textContent = "锁定派活：这条一定拟成执行文档 → 看板「待执行」";
@@ -210,6 +262,15 @@ function applyChatPrefs() {
   layout.classList.toggle("side-right", localStorage.getItem("chatPanelSide") === "right");
 }
 function autoGrow() { const t = $("#chatInput"); t.style.height = "auto"; t.style.height = Math.min(180, t.scrollHeight) + "px"; }
+function saveChatDraft() { try { localStorage.setItem("chatDraft", $("#chatInput").value || ""); } catch {} }
+function clearChatDraft() { try { localStorage.removeItem("chatDraft"); } catch {} }
+function restoreChatDraft() {
+  let d = "";
+  try { d = localStorage.getItem("chatDraft") || ""; } catch {}
+  if (!d) return;
+  const ta = $("#chatInput");
+  if (ta && !ta.value) { ta.value = d; autoGrow(); }
+}
 function groupSessions(sessions) {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -270,10 +331,18 @@ async function renderChat() {
 }
 function maybeOfferRetry() {
   const last = chatHistory[chatHistory.length - 1];
-  if (!last || last.role !== "user") return;
+  if (!last) return;
+  // Offer a one-click resend either when the last message is an unanswered user
+  // message, or when the turn ended in an error — the error text promises the
+  // message is preserved and "可重发", so surface an actual control to do so.
+  const isErr = last.role === "system" && /^出错/.test(last.text || "");
+  if (last.role !== "user" && !isErr) return;
+  const lastUser = chatHistory.slice().reverse().find((m) => m.role === "user");
+  if (!lastUser || !(lastUser.text || "").trim()) return;
   const row = el("div", "msg system");
-  row.innerHTML = '上条消息没有收到回复。<button class="btn ghost sm" style="margin-left:8px">重试</button>';
-  row.querySelector("button").onclick = () => { $("#chatInput").value = last.text; chatSend(); };
+  const label = isErr ? "上一条没发成功。" : "上条消息没有收到回复。";
+  row.innerHTML = esc(label) + '<button class="btn ghost sm" style="margin-left:8px">重发</button>';
+  row.querySelector("button").onclick = () => { $("#chatInput").value = lastUser.text; chatSend(); };
   $("#chatLog").appendChild(row);
 }
 function chatWelcome() {
@@ -335,7 +404,7 @@ async function cancelChat() {
 async function chatSend() {
   const msg = $("#chatInput").value.trim();
   if (!msg || chatInflight) return;
-  $("#chatInput").value = ""; autoGrow();
+  $("#chatInput").value = ""; autoGrow(); clearChatDraft();
   const sendHistory = chatHistory.slice();
   addMsg("user", msg);
   chatHistory.push({ role: "user", text: msg });
@@ -418,6 +487,7 @@ function handleCeoEvent(ev) {
       $("#chatStatus").textContent = (chatInflight.statusLabel || "思考中") + `… ${sec}s`;
     }
     if (stick) $("#chatLog").scrollTop = $("#chatLog").scrollHeight;
+    updateChatJump();
   }
   if (ev.kind === "status" || ev.kind === "doc" || ev.kind === "delegate") refreshIdeas();
 }
@@ -878,11 +948,34 @@ function artifactPreview(a) {
   if (["txt"].includes(a.kind)) return `<div class="artifact-text">${esc(content)}</div>`;
   return `<pre class="artifact-code"><code>${esc(content)}</code></pre>`;
 }
+// Split one CSV line into fields, honoring double-quoted fields so a comma
+// inside quotes (e.g. "Smith, John") stays in one cell instead of splitting the
+// row. Handles "" as an escaped quote. (Embedded newlines aren't handled — same
+// as before — but quoted commas are by far the common real-world case.)
+function splitCsvLine(line) {
+  const out = [];
+  let field = "", inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"') { if (line[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') { inQ = true; }
+    else if (c === ",") { out.push(field); field = ""; }
+    else field += c;
+  }
+  out.push(field);
+  return out;
+}
 function csvPreview(src) {
-  const rows = (src || "").trim().split(/\r?\n/).slice(0, 30).map((line) => line.split(",").map((c) => c.trim()));
+  const CAP = 30;
+  const lines = (src || "").trim().split(/\r?\n/);
+  const rows = lines.slice(0, CAP).map((line) => splitCsvLine(line).map((c) => c.trim()));
   if (!rows.length) return `<div class="muted artifact-pad">空 CSV</div>`;
   const head = rows[0], body = rows.slice(1);
-  return `<div class="artifact-table-wrap"><table class="artifact-table"><thead><tr>${head.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  // The preview is capped; say so rather than silently dropping rows.
+  const more = lines.length > CAP ? `<div class="muted artifact-pad">仅显示前 ${CAP} 行，共 ${lines.length} 行。</div>` : "";
+  return `<div class="artifact-table-wrap"><table class="artifact-table"><thead><tr>${head.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>${more}`;
 }
 function artifactIcon(kind) {
   if (kind === "md") return "MD";
