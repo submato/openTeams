@@ -56,7 +56,8 @@ export async function ceoChatTurn(agent, message, cwd, opts = {}) {
     .map((m) => `${m.role === "user" ? "用户" : agent.name}：${(m.text || "").slice(0, 1200)}`)
     .join("\n");
   const skillBlock = opts.skillContext && opts.skillContext.trim() ? `\n\n# 可用团队技能（已自动匹配）\n${opts.skillContext}` : "";
-  const payload = `${systemFor(agent, mode)}${skillBlock}${hist ? `\n\n# 最近对话\n${hist}` : ""}\n\n# 用户最新消息\n${message}`;
+  const extraBlock = opts.extraContext && String(opts.extraContext).trim() ? `\n\n${opts.extraContext}` : "";
+  const payload = `${systemFor(agent, mode)}${skillBlock}${extraBlock}${hist ? `\n\n# 最近对话\n${hist}` : ""}\n\n# 用户最新消息\n${message}`;
 
   // Bounded retry for TRANSIENT failures. Critically: if a turn already streamed
   // partial text, we KEEP it and do NOT retry — so a half-written reply is never

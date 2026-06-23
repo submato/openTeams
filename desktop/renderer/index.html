@@ -320,10 +320,12 @@
   <div class="modal-box">
     <div class="modal-head">
       <span id="dtTitle" class="modal-title"></span>
+      <button id="dtCopyId" class="icon-btn" title="复制卡片 ID">⧉ ID</button>
       <button id="dtClose" class="icon-btn">✕</button>
     </div>
     <div class="modal-tabs">
       <button class="mtab active" data-tab="doc">执行文档</button>
+      <button class="mtab" data-tab="chat">对话</button>
       <button class="mtab" data-tab="report">运行报告</button>
       <button class="mtab" data-tab="timeline">运行过程</button>
       <button class="mtab" data-tab="artifacts">运行产物</button>
@@ -334,6 +336,14 @@
     <div id="dtDocFoot" class="modal-foot">
       <span id="dtDocHint" class="hint">支持 Markdown · ⌘S 保存</span>
       <button id="dtDocSave" class="btn primary sm" disabled>保存</button>
+    </div>
+    <div id="dtChat" class="modal-chat hidden">
+      <div id="dtChatLog" class="cc-log"></div>
+      <div class="cc-compose">
+        <textarea id="dtChatInput" class="cc-input" rows="2" spellcheck="false" placeholder="和 CEO 聊这张卡：让它读已有成果，改标题 / 执行文档 / 状态…"></textarea>
+        <button id="dtChatSend" class="btn primary sm">发送</button>
+      </div>
+      <div id="dtChatStatus" class="hint"></div>
     </div>
     <div id="dtReport" class="modal-body md hidden"></div>
     <div id="dtTimeline" class="modal-body hidden"></div>

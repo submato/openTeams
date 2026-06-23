@@ -106,6 +106,9 @@ let activeSessionId = null;
 let editing = null;
 let detailIdeaId = null;
 let detailDocDirty = false;
+let detailIdea = null;
+let cardChatLive = null;
+let cardChatInflight = false;
 
 const isView = (v) => { const e = document.querySelector('.view[data-view="' + v + '"]'); return e && e.classList.contains("active"); };
 
@@ -123,6 +126,7 @@ async function init() {
 
   bindNav(); bindChat(); bindBoard(); bindSchedule(); bindAgents(); bindEditor(); bindSettings(); bindDetail(); bindSkills(); bindObjectives();
   api.onCeoEvent(handleCeoEvent);
+  api.onCardEvent(handleCardEvent);
   api.onCrewEvent(handleCrewEvent);
   api.onSchedEvent(handleSchedEvent);
   setInterval(tickAutoStatus, 1000);
@@ -592,6 +596,16 @@ function bindDetail() {
   $$(".mtab").forEach((t) => (t.onclick = () => switchTab(t.dataset.tab)));
   $("#dtDocSave").onclick = () => saveDetailDoc();
   $("#dtDocEditor").addEventListener("input", () => { detailDocDirty = true; updateDocSaveHint(); });
+  $("#dtCopyId").onclick = async () => {
+    if (!detailIdeaId) return;
+    try { await navigator.clipboard.writeText(detailIdeaId); } catch {}
+    const b = $("#dtCopyId"); const t = b.textContent; b.textContent = "已复制 ✓";
+    setTimeout(() => { b.textContent = t; }, 1200);
+  };
+  $("#dtChatSend").onclick = () => cardChatSend();
+  $("#dtChatInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); cardChatSend(); }
+  });
   document.addEventListener("keydown", (e) => {
     if ($("#detail").classList.contains("hidden")) return;
     if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); saveDetailDoc(); }
@@ -608,15 +622,101 @@ async function closeDetail() {
   if (detailDocDirty && !confirm("执行文档有未保存的修改，确定关闭？")) return;
   $("#detail").classList.add("hidden");
   detailIdeaId = null;
+  detailIdea = null;
   detailDocDirty = false;
+}
+
+// ---- Per-card CEO chat (in the detail modal) ----
+function stripCardMarkers(t) {
+  return String(t || "").replace(/\[\[CARD_(TITLE|DOC|STATUS)\]\][\s\S]*?\[\[\/CARD_\1\]\]/g, "").trim();
+}
+function appendCardMsg(role, text) {
+  const log = $("#dtChatLog");
+  const b = el("div", "cc-msg " + role);
+  b.innerHTML = role.includes("assistant") ? mdToHtml(text || "") : esc(text || "");
+  log.appendChild(b);
+  log.scrollTop = log.scrollHeight;
+  return b;
+}
+function renderCardChat(it) {
+  const log = $("#dtChatLog");
+  log.innerHTML = "";
+  const chat = (it && it.chat) || [];
+  if (!chat.length) {
+    log.innerHTML = `<div class="cc-empty">和 CEO 聊这张卡。它能读你的现有成果，并直接改这张卡的标题 / 执行文档 / 状态。</div>`;
+  } else {
+    chat.forEach((m) => appendCardMsg(m.role === "user" ? "user" : "assistant", m.text));
+  }
+  $("#dtChatStatus").textContent = "";
+}
+function handleCardEvent(ev) {
+  if (!cardChatLive || !ev || ev.ideaId !== cardChatLive.id) return;
+  const b = cardChatLive.bubble;
+  if (ev.kind === "tool") {
+    $("#dtChatStatus").textContent = "调查中…" + (ev.name ? "（" + ev.name + "）" : "");
+  } else if (ev.kind === "text" && ev.text) {
+    b.classList.remove("typing");
+    b._stream = ev.text;
+    b.innerHTML = mdToHtml(stripCardMarkers(ev.text));
+    $("#dtChatLog").scrollTop = $("#dtChatLog").scrollHeight;
+  }
+}
+async function cardChatSend() {
+  const input = $("#dtChatInput");
+  const msg = input.value.trim();
+  if (!msg || !detailIdeaId || cardChatInflight) return;
+  const id = detailIdeaId;
+  input.value = "";
+  if ($("#dtChatLog .cc-empty")) $("#dtChatLog").innerHTML = "";
+  appendCardMsg("user", msg);
+  const history = (detailIdea && detailIdea.chat) ? detailIdea.chat.slice() : [];
+  const bubble = appendCardMsg("assistant typing", "CEO 正在看这张卡…");
+  bubble._stream = "";
+  cardChatLive = { id, bubble };
+  cardChatInflight = true;
+  $("#dtChatSend").disabled = true;
+  $("#dtChatStatus").textContent = "思考中…";
+  let res;
+  try { res = await api.cardChat(id, history, msg); }
+  catch (err) { res = { ok: false, error: err.message || String(err) }; }
+  finally {
+    cardChatInflight = false;
+    cardChatLive = null;
+    $("#dtChatSend").disabled = false;
+    $("#dtChatStatus").textContent = "";
+  }
+  bubble.classList.remove("typing");
+  if (!res || !res.ok) {
+    const partial = (res && res.text && res.text.trim()) ? res.text.trim() : stripCardMarkers(bubble._stream || "");
+    bubble.innerHTML = mdToHtml(partial || "（没有内容）");
+    appendCardMsg("system", "出错：" + ((res && res.error) || "未知错误"));
+    return;
+  }
+  bubble.innerHTML = mdToHtml(res.text || "（无回复）");
+  if (res.idea) detailIdea = res.idea;
+  const applied = res.applied || {};
+  const parts = [];
+  if (applied.text) parts.push("标题");
+  if (applied.doc) parts.push("执行文档");
+  if (applied.status) parts.push("状态");
+  if (parts.length) {
+    appendCardMsg("system", "✅ 已更新这张卡的" + parts.join("、"));
+    if (res.idea) {
+      $("#dtTitle").textContent = res.idea.text || "";
+      if (!detailDocDirty) { $("#dtDocEditor").value = res.idea.doc || ""; updateDocSaveHint(); }
+    }
+    await refreshIdeas();
+  }
 }
 function switchTab(tab) {
   $$(".mtab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
   $("#dtDocPane").classList.toggle("hidden", tab !== "doc");
   $("#dtDocFoot").classList.toggle("hidden", tab !== "doc");
+  $("#dtChat").classList.toggle("hidden", tab !== "chat");
   $("#dtReport").classList.toggle("hidden", tab !== "report");
   $("#dtTimeline").classList.toggle("hidden", tab !== "timeline");
   $("#dtArtifacts").classList.toggle("hidden", tab !== "artifacts");
+  if (tab === "chat") setTimeout(() => $("#dtChatInput").focus(), 0);
 }
 async function saveDetailDoc() {
   if (!detailIdeaId || !detailDocDirty) return;
@@ -628,10 +728,12 @@ async function saveDetailDoc() {
 }
 async function openDetail(it, tab) {
   detailIdeaId = it.id;
+  detailIdea = it;
   detailDocDirty = false;
   $("#dtTitle").textContent = it.text;
   $("#dtDocEditor").value = it.doc || "";
   updateDocSaveHint();
+  renderCardChat(it);
   let report = "（还没有运行报告）";
   const rep = await api.ideaReport(it.id);
   if (rep && rep.run) {

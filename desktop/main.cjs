@@ -7,6 +7,26 @@ const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { createWatchdog } = require("./selfheal.cjs");
 
+// Global crash guard. The Cursor SDK spawns a local agent child process; when
+// that child exits while the SDK is still writing to its stdin we get an
+// asynchronous `write EPIPE` (or ECONNRESET) that has no catch site and would
+// otherwise kill the whole app via Electron's fatal-error dialog. These stream
+// errors are benign — log and keep running. Anything genuinely unexpected is
+// still logged, but we never let a background error take the app down.
+const BENIGN_ERR = new Set(["EPIPE", "ECONNRESET", "ERR_STREAM_WRITE_AFTER_END", "ERR_STREAM_DESTROYED"]);
+function isBenign(err) {
+  const code = err && (err.code || err.errno);
+  return BENIGN_ERR.has(code) || /\bEPIPE\b|write after end|premature close/i.test(String(err && err.message || ""));
+}
+process.on("uncaughtException", (err) => {
+  if (isBenign(err)) { console.warn("[main] ignored benign error:", err && err.message); return; }
+  console.error("[main] uncaughtException:", err && err.stack || err);
+});
+process.on("unhandledRejection", (reason) => {
+  if (isBenign(reason)) { console.warn("[main] ignored benign rejection:", reason && reason.message); return; }
+  console.error("[main] unhandledRejection:", reason && reason.stack || reason);
+});
+
 const DEV_ROOT = path.resolve(__dirname, "..");
 const USER_DATA_DIR = "ai-team";
 const SMOKE_TEST = process.argv.includes("--smoke-test");
@@ -242,6 +262,17 @@ function registerIpc() {
   });
 
   ipcMain.handle("ceo:cancel", async () => { const s = await loadStore(); return typeof s.cancelCeoChat === "function" ? s.cancelCeoChat() : false; });
+
+  // Per-card CEO chat: a conversation scoped to one board card. The CEO can edit
+  // the card itself (title/doc/status) through the store. Streams via card:event.
+  ipcMain.handle("card:chat", async (_e, ideaId, history, message) => {
+    if (!process.env.CURSOR_API_KEY) return { ok: false, error: "缺少 CURSOR_API_KEY（在 ai-team/.env 设置）" };
+    const s = await loadStore();
+    const onStream = (evt) => send("card:event", { ideaId, ...evt });
+    try { return await s.chatAboutCard(ideaId, message, history, process.env.CURSOR_API_KEY, onStream); }
+    catch (err) { return { ok: false, error: err.message }; }
+  });
+  ipcMain.handle("card:cancel", async () => { const s = await loadStore(); return typeof s.cancelCeoChat === "function" ? s.cancelCeoChat() : false; });
 
   // CEO sessions (multiple conversations)
   ipcMain.handle("ceo:sessions", async () => (await loadStore()).listCeoSessions());

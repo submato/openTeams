@@ -58,6 +58,15 @@ contextBridge.exposeInMainWorld("api", {
     return () => ipcRenderer.removeListener("ceo:event", h);
   },
 
+  // Per-card CEO chat (scoped to one board card; can edit the card)
+  cardChat: (ideaId, history, message) => ipcRenderer.invoke("card:chat", ideaId, history, message),
+  cardCancel: () => ipcRenderer.invoke("card:cancel"),
+  onCardEvent: (cb) => {
+    const h = (_e, p) => cb(p);
+    ipcRenderer.on("card:event", h);
+    return () => ipcRenderer.removeListener("card:event", h);
+  },
+
   // Ideas backlog
   ideasList: () => ipcRenderer.invoke("ideas:list"),
   ideaAdd: (text) => ipcRenderer.invoke("ideas:add", text),

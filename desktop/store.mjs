@@ -716,6 +716,79 @@ export async function chatWithCeo(history, message, apiKey, onStream, onCrewEven
   return ceoDirectReply(ceo, message, apiKey, onStream, history);
 }
 
+// ---- Per-card CEO chat ----------------------------------------------------
+// A conversation scoped to ONE board card. The CEO has full read/write access
+// (agent mode) so it can ground in real files, and it edits THE CARD itself
+// through the store — NOT by hand-editing ideas.json (the running app caches
+// ideas in memory and would overwrite any on-disk change). The CEO signals
+// card edits with sentinel blocks we parse out and apply via updateIdea.
+const CARD_EDIT_STATUSES = ["pending_confirm", "pending"];
+function parseCardEdits(text) {
+  let reply = String(text || "");
+  const edits = {};
+  const grab = (re) => {
+    const m = reply.match(re);
+    if (!m) return null;
+    reply = reply.replace(m[0], "").trim();
+    return (m[1] || "").trim();
+  };
+  const title = grab(/\[\[CARD_TITLE\]\]([\s\S]*?)\[\[\/CARD_TITLE\]\]/);
+  const doc = grab(/\[\[CARD_DOC\]\]\s*([\s\S]*?)\s*\[\[\/CARD_DOC\]\]/);
+  const status = grab(/\[\[CARD_STATUS\]\]([\s\S]*?)\[\[\/CARD_STATUS\]\]/);
+  if (title) edits.text = title;
+  if (doc) edits.doc = doc;
+  if (status && CARD_EDIT_STATUSES.includes(status)) edits.status = status;
+  return { reply: reply.trim(), edits };
+}
+
+export async function chatAboutCard(ideaId, message, history, apiKey, onStream) {
+  const idea = getIdeas().find((x) => x.id === ideaId);
+  if (!idea) return { ok: false, error: "卡片不存在" };
+  const ceo = ceoAgentDef();
+  if (!ceo) return { ok: false, error: "没有可用的 CEO（在员工库配置一个）。" };
+
+  const cardCtx = `# 你正在针对这张看板卡片和用户对话
+- 卡片 id：${idea.id}
+- 当前标题：${idea.text || "(无)"}
+- 当前状态：${idea.status}
+
+## 这张卡当前的执行文档
+${idea.doc ? idea.doc : "(还没有执行文档)"}
+
+## 如何真正修改这张卡（非常重要）
+你**不能**靠手改任何 JSON 文件来改看板——运行中的 app 不会读那个文件，改了也白改。要修改这张卡，请在回复的**最后**用下面的标记块输出，系统会自动写进这张卡：
+- 改标题：[[CARD_TITLE]]新标题[[/CARD_TITLE]]
+- 改执行文档（必须给出**完整**的新文档，Markdown，不要只给片段或 diff）：
+[[CARD_DOC]]
+……完整的新执行文档……
+[[/CARD_DOC]]
+- 改状态（仅限 pending_confirm=待确认 或 pending=待执行）：[[CARD_STATUS]]pending[[/CARD_STATUS]]
+
+规则：只有在用户确实要求改动时才输出这些标记块；纯聊天/答疑时不要输出。标记块以外的文字会作为对话回复展示给用户，请用一句话说清你改了什么。涉及"在已有成果上修改/续做"时，先去工作目录把相关现有文件读出来，基于真实现状改，别从零编。`;
+
+  const res = await ceoChatTurn(ceo, message, ceoCwd(), {
+    apiKey, mode: "agent", store: await sdkStore(), onStream,
+    history: (history && history.length ? history : (idea.chat || [])).slice(-10),
+    extraContext: cardCtx, onRun: (run) => { ceoRun = run; },
+  });
+  ceoRun = null;
+  if (!res || !res.ok) {
+    const { reply } = parseCardEdits(res?.text || "");
+    return { ok: false, error: res?.error || "对话失败", text: reply };
+  }
+
+  const { reply, edits } = parseCardEdits(res.text || "");
+  let updated = idea;
+  if (Object.keys(edits).length) updated = updateIdea(ideaId, edits) || idea;
+
+  const chat = ((updated.chat || idea.chat || []).slice());
+  chat.push({ role: "user", text: message });
+  chat.push({ role: "assistant", text: reply || res.text || "" });
+  updated = updateIdea(ideaId, { chat: chat.slice(-40) }) || updated;
+
+  return { ok: true, text: reply || res.text || "", applied: edits, idea: updated };
+}
+
 // Execute a board card: dispatch the team, moving the card pending → running →
 // done / failed and recording the verdict / error.
 export async function executeIdea(ideaId, apiKey, onCrewEvent, onStream, opts = {}) {
