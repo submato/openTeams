@@ -169,7 +169,13 @@ export async function chatTurn(agent, history, message, cwd, opts = {}) {
   const apiKey = opts.apiKey || process.env.CURSOR_API_KEY;
   if (!apiKey) return { ok: false, text: "", error: "Missing CURSOR_API_KEY" };
 
-  const convo = (history || []).map((m) => `${m.role === "user" ? "User" : agent.name}: ${m.text}`).join("\n");
+  // Bound the prompt: keep only the recent turns and cap each message, mirroring
+  // ceoChatTurn. Without this an Agents-page chat grows the prompt without limit
+  // as it gets longer, eventually overflowing context and slowing every turn.
+  const convo = (history || [])
+    .slice(-10)
+    .map((m) => `${m.role === "user" ? "User" : agent.name}: ${(m.text || "").slice(0, 1200)}`)
+    .join("\n");
   const prompt = `${systemFor(agent, "plan")}
 
 # Conversation so far
@@ -181,12 +187,24 @@ ${message}
 # Reply as ${agent.name}
 Output only your reply text. Do NOT modify files.`;
 
-  try {
-    const result = await Agent.prompt(prompt, { apiKey, model: { id: agent.model }, mode: "plan", local: { cwd } });
-    if (result.status !== "finished") return { ok: false, text: result.result ?? "", error: `status: ${result.status}` };
-    return { ok: true, text: result.result ?? "" };
-  } catch (err) {
-    if (err instanceof CursorAgentError) return { ok: false, text: "", error: err.message };
-    return { ok: false, text: "", error: err.message };
+  // Bounded retry for TRANSIENT failures. This turn is stateless and read-only
+  // (plan mode, no file edits), so retrying can never double-apply side effects;
+  // a flaky SDK hiccup shouldn't surface as a hard failure to the user.
+  const maxAttempts = 3;
+  let lastErr = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await Agent.prompt(prompt, { apiKey, model: { id: agent.model }, mode: "plan", local: { cwd } });
+      if (result.status === "finished") return { ok: true, text: result.result ?? "" };
+      lastErr = `status: ${result.status}`;
+      if (attempt < maxAttempts) { await new Promise((r) => setTimeout(r, 800 * attempt)); continue; }
+      return { ok: false, text: result.result ?? "", error: lastErr };
+    } catch (err) {
+      lastErr = err.message;
+      const retryable = !(err instanceof CursorAgentError) || err.isRetryable;
+      if (attempt < maxAttempts && retryable) { await new Promise((r) => setTimeout(r, 800 * attempt)); continue; }
+      return { ok: false, text: "", error: lastErr };
+    }
   }
+  return { ok: false, text: "", error: lastErr };
 }

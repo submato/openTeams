@@ -581,6 +581,9 @@ function bindDetail() {
   document.addEventListener("keydown", (e) => {
     if ($("#detail").classList.contains("hidden")) return;
     if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); saveDetailDoc(); }
+    // Escape closes the modal (standard dialog behavior); closeDetail() still
+    // guards unsaved doc edits with a confirm, so nothing is silently lost.
+    else if (e.key === "Escape") { e.preventDefault(); closeDetail(); }
   });
 }
 function updateDocSaveHint() {
