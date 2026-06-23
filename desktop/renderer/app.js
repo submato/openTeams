@@ -18,7 +18,10 @@ function toast(msg, kind = "info", ms = 5000) {
   const t = el("div", "toast " + kind, esc(msg));
   host.appendChild(t);
   requestAnimationFrame(() => t.classList.add("show"));
-  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
+  // ms <= 0 means "sticky": keep it until something dismisses it (used for
+  // critical errors that need a deliberate user action rather than a timeout).
+  if (ms > 0) setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
+  return t;
 }
 
 // Copy a fenced code block's raw text. textContent decodes the HTML-escaped
@@ -160,15 +163,24 @@ const RESTORABLE_VIEWS = ["chat", "board", "schedule", "agents", "skills", "runs
 
 // ---------------------------------------------------------------- init
 async function init() {
-  const env = await api.envStatus();
-  $("#envDot").classList.toggle("ok", env.hasKey);
-  $("#envText").textContent = env.hasKey ? "Key 已加载" : "缺少 Key";
-  $("#setKey").textContent = env.hasKey ? "已加载 ✓" : "缺失（在 Application Support/ai-team/.env 设置）";
-  META = await api.getMeta();
-  SETTINGS = await api.getSettings();
-  $("#setNoConfirm").checked = !SETTINGS.cautious;
-  $("#setWsBase").value = SETTINGS.workspaceBase || "~";
-  SCHEDULE = await api.getSchedule();
+  // Load environment + persisted state best-effort. A single corrupt data file
+  // or a flaky IPC call must NOT abort init and leave a blank, unusable screen:
+  // fall back to the in-memory defaults and let the UI bind/render anyway (each
+  // view re-fetches its own data on open, so this degrades gracefully).
+  try {
+    const env = await api.envStatus();
+    $("#envDot").classList.toggle("ok", env.hasKey);
+    $("#envText").textContent = env.hasKey ? "Key 已加载" : "缺少 Key";
+    $("#setKey").textContent = env.hasKey ? "已加载 ✓" : "缺失（在 Application Support/ai-team/.env 设置）";
+    META = await api.getMeta();
+    SETTINGS = await api.getSettings();
+    $("#setNoConfirm").checked = !SETTINGS.cautious;
+    $("#setWsBase").value = SETTINGS.workspaceBase || "~";
+    SCHEDULE = await api.getSchedule();
+  } catch (e) {
+    console.error("初始化加载失败，使用默认值继续", e);
+    toast("部分设置加载失败，已用默认值继续。", "warn", 7000);
+  }
 
   bindNav(); bindChat(); bindBoard(); bindSchedule(); bindAgents(); bindEditor(); bindSettings(); bindDetail(); bindSkills(); bindObjectives();
   // Single delegated handler so every markdown-rendered code block (chat, docs,
@@ -180,9 +192,11 @@ async function init() {
   setInterval(tickAutoStatus, 1000);
   reflectSchedDot();
 
-  await refreshIdeas();
-  const interrupted = IDEAS.filter((i) => i.status === "interrupted").length;
-  if (interrupted > 0) toast(`有 ${interrupted} 个任务上次被中断，可在看板「已中断」里继续或重跑。`, "warn", 8000);
+  try {
+    await refreshIdeas();
+    const interrupted = IDEAS.filter((i) => i.status === "interrupted").length;
+    if (interrupted > 0) toast(`有 ${interrupted} 个任务上次被中断，可在看板「已中断」里继续或重跑。`, "warn", 8000);
+  } catch (e) { console.error("看板数据加载失败", e); }
   // Reopen the last view (mirrors the persisted chat mode / draft / panel prefs)
   // so a reload or self-heal relaunch doesn't yank the user back to chat.
   let startView = "chat";
@@ -1457,5 +1471,13 @@ async function objScoreUI(id) {
   objStepUI(id);   // auto-continue
 }
 
-init();
+// Final safety net: if init still throws unexpectedly, surface it instead of
+// failing silently to a blank window, and offer a one-click reload to recover.
+init().catch((e) => {
+  console.error("init 失败", e);
+  try {
+    const t = toast("界面初始化出错，点这里重新加载", "error", 0);
+    if (t) { t.style.cursor = "pointer"; t.onclick = () => location.reload(); }
+  } catch {}
+});
 })();
