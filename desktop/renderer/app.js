@@ -169,7 +169,9 @@ function bindChat() {
     // Ignore Enter while an IME is composing (e.g. selecting a Chinese candidate).
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); chatSend(); }
   });
-  ta.addEventListener("input", autoGrow);
+  // Persist the unsent draft so a reload/crash/navigation never loses what was typed.
+  ta.addEventListener("input", () => { autoGrow(); saveChatDraft(); });
+  restoreChatDraft();
   $("#newSession").onclick = async () => { await api.ceoSessionCreate(); await renderChat(); };
   $("#chatPanelToggle").onclick = () => {
     const c = localStorage.getItem("chatPanelCollapsed") === "1";
@@ -214,6 +216,15 @@ function applyChatPrefs() {
   layout.classList.toggle("side-right", localStorage.getItem("chatPanelSide") === "right");
 }
 function autoGrow() { const t = $("#chatInput"); t.style.height = "auto"; t.style.height = Math.min(180, t.scrollHeight) + "px"; }
+function saveChatDraft() { try { localStorage.setItem("chatDraft", $("#chatInput").value || ""); } catch {} }
+function clearChatDraft() { try { localStorage.removeItem("chatDraft"); } catch {} }
+function restoreChatDraft() {
+  let d = "";
+  try { d = localStorage.getItem("chatDraft") || ""; } catch {}
+  if (!d) return;
+  const ta = $("#chatInput");
+  if (ta && !ta.value) { ta.value = d; autoGrow(); }
+}
 function groupSessions(sessions) {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -347,7 +358,7 @@ async function cancelChat() {
 async function chatSend() {
   const msg = $("#chatInput").value.trim();
   if (!msg || chatInflight) return;
-  $("#chatInput").value = ""; autoGrow();
+  $("#chatInput").value = ""; autoGrow(); clearChatDraft();
   const sendHistory = chatHistory.slice();
   addMsg("user", msg);
   chatHistory.push({ role: "user", text: msg });
