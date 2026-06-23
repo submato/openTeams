@@ -804,8 +804,27 @@ function artifactPreview(a) {
   if (["txt"].includes(a.kind)) return `<div class="artifact-text">${esc(content)}</div>`;
   return `<pre class="artifact-code"><code>${esc(content)}</code></pre>`;
 }
+// Split one CSV line into fields, honoring double-quoted fields so a comma
+// inside quotes (e.g. "Smith, John") stays in one cell instead of splitting the
+// row. Handles "" as an escaped quote. (Embedded newlines aren't handled — same
+// as before — but quoted commas are by far the common real-world case.)
+function splitCsvLine(line) {
+  const out = [];
+  let field = "", inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"') { if (line[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') { inQ = true; }
+    else if (c === ",") { out.push(field); field = ""; }
+    else field += c;
+  }
+  out.push(field);
+  return out;
+}
 function csvPreview(src) {
-  const rows = (src || "").trim().split(/\r?\n/).slice(0, 30).map((line) => line.split(",").map((c) => c.trim()));
+  const rows = (src || "").trim().split(/\r?\n/).slice(0, 30).map((line) => splitCsvLine(line).map((c) => c.trim()));
   if (!rows.length) return `<div class="muted artifact-pad">空 CSV</div>`;
   const head = rows[0], body = rows.slice(1);
   return `<div class="artifact-table-wrap"><table class="artifact-table"><thead><tr>${head.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
