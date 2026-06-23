@@ -123,6 +123,19 @@ function createWindow() {
   // Renderer painted + main-process startup survived ⇒ this boot is healthy.
   // Tell the watchdog so it records this commit as last-known-good.
   win.webContents.once("did-finish-load", markBootHealthy);
+
+  // Agent output is rendered as markdown with target="_blank" links. Never let
+  // such (untrusted) links open a chromeless in-app window or navigate the app
+  // shell away — route http(s) to the user's real browser and deny the rest.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) { shell.openExternal(url).catch(() => {}); }
+    return { action: "deny" };
+  });
+  win.webContents.on("will-navigate", (e, url) => {
+    if (url === win.webContents.getURL()) return;  // allow in-place reloads only
+    e.preventDefault();
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url).catch(() => {});
+  });
 }
 
 function markBootHealthy() {
