@@ -282,6 +282,14 @@ function addMsg(role, text) {
   log.appendChild(m); log.scrollTop = log.scrollHeight;
   return m;
 }
+// True when the chat log is scrolled to (or near) the bottom. Used so live
+// streaming only auto-scrolls when the user is already following along — if they
+// scrolled up to re-read something, incoming tokens won't yank them back down.
+function chatNearBottom() {
+  const log = $("#chatLog");
+  if (!log) return true;
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+}
 function docBubble(bubble, idea) {
   const status = idea.status || "pending";
   bubble.className = "msg assistant doc";
@@ -386,6 +394,9 @@ function boardLink() { const s = el("span", "mini-link", "▶ 看板"); s.onclic
 
 function handleCeoEvent(ev) {
   if (chatLive) {
+    // Capture intent BEFORE mutating the bubble: only follow the stream if the
+    // user is already at the bottom, so reading scrolled-up text isn't disrupted.
+    const stick = chatNearBottom();
     if (ev.kind === "planning") chatLive.textContent = "Elon 正在拟执行文档…";
     else if (ev.kind === "doc" && ev.idea) docBubble(chatLive, ev.idea);
     else if (ev.kind === "delegate") $("#chatStatus").textContent = "团队执行中…";
@@ -402,7 +413,7 @@ function handleCeoEvent(ev) {
       const sec = Math.floor((Date.now() - chatInflight.startedAt) / 1000);
       $("#chatStatus").textContent = (chatInflight.statusLabel || "思考中") + `… ${sec}s`;
     }
-    $("#chatLog").scrollTop = $("#chatLog").scrollHeight;
+    if (stick) $("#chatLog").scrollTop = $("#chatLog").scrollHeight;
   }
   if (ev.kind === "status" || ev.kind === "doc" || ev.kind === "delegate") refreshIdeas();
 }
