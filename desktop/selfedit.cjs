@@ -183,7 +183,10 @@ function discard(repo, dir, branch) {
 // repo root (gitignored) and stays writable, as does node_modules/.git and the
 // worktree itself (a separate dir under tmp).
 const PROTECTED_SOURCE = ["desktop", "src", "package.json"];
-const LOCK_SKIP = new Set(["node_modules", ".git"]);
+// Never lock dependencies, git internals, or BUILD OUTPUT — only real source.
+// (Locking desktop/dist would freeze the 100MB+ packaged app read-only and break
+// the next electron-builder run, and makes lock/unlock walk thousands of files.)
+const LOCK_SKIP = new Set(["node_modules", ".git", "dist"]);
 const SRCLOCK_FILE = ".selfedit-srclock.json";
 
 function collectSourcePaths(repo, rel, acc) {

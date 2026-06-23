@@ -81,6 +81,12 @@ export async function kickoff(idea, options = {}) {
 ${idea}
 """
 
+FIRST, survey the working directory: read the existing relevant files/artifacts
+(scripts, storyboards, prior outputs, candidates) that already exist here. Your
+plan MUST build on what is already there — reuse and improve existing files
+instead of starting from scratch. In each task, say explicitly whether the
+teammate should EDIT a specific existing file or CREATE a new one.
+
 You manage this team. Decompose the idea into 2-5 concrete tasks and assign each
 to ONE teammate by their id. Available teammates:
 ${roster}

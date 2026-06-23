@@ -651,6 +651,7 @@ export async function planIdea(goal, apiKey, onStream, history = null) {
     onRun: (run) => { ceoRun = run; },
     history: history || getCeoChat(),
     skillContext: skillPick.context,
+    cwd: ceoCwd(),
   }).catch(() => "");
   ceoRun = null;
   const idea = addIdea(goal, doc);
@@ -682,7 +683,7 @@ async function ceoDirectReply(ceo, message, apiKey, onStream, history) {
     context: (history || getCeoChat()).map((m) => m.text || "").join("\n"),
   });
   const res = await ceoChatTurn(ceo, message, ceoCwd(), {
-    apiKey, mode: "plan", store: await sdkStore(), onStream,
+    apiKey, mode: "agent", store: await sdkStore(), onStream,
     history: history || getCeoChat(), onRun: (run) => { ceoRun = run; }, skillContext: skillPick.context,
   });
   ceoRun = null;

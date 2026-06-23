@@ -19,7 +19,7 @@ ${agent.persona ? `风格：${agent.persona}` : ""}
 你在和用户一对一深聊。像一位极聪明、第一性原理思考的合伙人那样回应：
 
 1) 先把问题想透：拆到本质，找出真正的关键变量、被忽略的假约束和最高杠杆的那一步。不要停在表面。
-2) 只在确实缺关键事实、且手头没有时才去查证（可读取工作目录里引用到的文件）；像「再说一遍 / 解释你刚才那段」这类**直接回答即可**，不要无谓地翻代码或拖时间。
+2) 只在确实缺关键事实、且手头没有时才去查证（可读取工作目录里引用到的文件）；像「再说一遍 / 解释你刚才那段」这类**直接回答即可**，不要无谓地翻代码或拖时间。但**只要话题涉及在已有成果上修改/升级/续做**（比如「在原来的基础上改」「继续之前那个」），就**必须先去工作目录把相关的现有文件/产物读出来**，基于真实现状给建议，绝不凭空假设或从零另起炉灶。
 3) 当关键结论取决于你不知道的信息时，**先反问 1-2 个最要害的问题**再给结论（像顶级顾问那样先对齐），不要替用户假设。
 4) 给**具体、有数据、有取舍**的建议：明确的推荐方案 + 为什么 + 主要风险 + 立刻可做的下一步。拒绝正确的废话和泛泛而谈。
 5) 深度优先而非堆字。该长则长，但每句都要有信息量；观点要鲜明，敢于指出用户想法里的问题。
@@ -27,8 +27,10 @@ ${agent.persona ? `风格：${agent.persona}` : ""}
 
 ${readonly
   ? "【只读模式】你可以读文件、跑只读命令、查资料来调研，但**绝不修改/创建/删除任何文件**，也不要真的去执行落地——落地交给团队。"
-  : "你可以读写工作目录里的文件。"}
-当一件事大到需要团队真正动手做时，提醒用户切到「派活」让团队执行；在这里你只负责想清楚、给建议、对齐方向。`;
+  : "【完全权限】你可以读写工作目录里的文件、创建/修改/删除文件、跑命令，真正把事做出来——不要只动嘴。用户让你改/做什么，就**真的动手改、动手做完**，做完后如实说清你具体改了哪些文件、做了什么；做不到就直说做不到，**绝不谎称已完成或已修改**。"}
+${readonly
+  ? "当一件事大到需要团队真正动手做时，提醒用户切到「派活」让团队执行；在这里你只负责想清楚、给建议、对齐方向。"
+  : "需要多人协作的大工程，可以建议用户切到「派活」让团队批量推进；但你自己能直接做掉的，就直接做掉。"}`;
 }
 
 /**
@@ -56,10 +58,28 @@ export async function ceoChatTurn(agent, message, cwd, opts = {}) {
   const skillBlock = opts.skillContext && opts.skillContext.trim() ? `\n\n# 可用团队技能（已自动匹配）\n${opts.skillContext}` : "";
   const payload = `${systemFor(agent, mode)}${skillBlock}${hist ? `\n\n# 最近对话\n${hist}` : ""}\n\n# 用户最新消息\n${message}`;
 
+  // Bounded retry for TRANSIENT failures. Critically: if a turn already streamed
+  // partial text, we KEEP it and do NOT retry — so a half-written reply is never
+  // thrown away on a mid-stream error.
+  const maxAttempts = 3;
+  let last = { ok: false, text: "", status: "error", error: "未知错误" };
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    last = await ceoChatTurnOnce({ apiKey, model, mode, local, payload, onStream, onRun: opts.onRun, name: `CEO·${agent.name}` });
+    if (last.ok) return last;
+    if (last.text && last.text.trim()) return last;         // partial answer → keep it
+    if (last.status === "cancelled") return last;
+    const transient = last.status === "error" || last.status === "exception" || last.status === "startup_error";
+    if (attempt < maxAttempts && transient) { await new Promise((r) => setTimeout(r, 700 * attempt)); continue; }
+    return last;
+  }
+  return last;
+}
+
+async function ceoChatTurnOnce({ apiKey, model, mode, local, payload, onStream, onRun, name }) {
   try {
-    const sdkAgent = await Agent.create({ apiKey, model, mode, name: `CEO·${agent.name}`, local });
+    const sdkAgent = await Agent.create({ apiKey, model, mode, name, local });
     const run = await sdkAgent.send(payload, { mode });
-    if (typeof opts.onRun === "function") opts.onRun(run);
+    if (typeof onRun === "function") onRun(run);
 
     let liveText = "";
     try {
@@ -80,13 +100,12 @@ export async function ceoChatTurn(agent, message, cwd, opts = {}) {
     try { sdkAgent.close?.(); } catch {}
     const final = result.result;
     const text = (final && final.trim().length) ? final : liveText;
-    if (result.status !== "finished" && result.status !== "cancelled") {
-      return { ok: false, text, error: `status: ${result.status}` };
-    }
-    return { ok: true, text };
+    if (result.status === "cancelled") return { ok: false, status: "cancelled", text, error: "已取消" };
+    if (result.status !== "finished") return { ok: false, status: result.status || "error", text, error: `status: ${result.status}` };
+    return { ok: true, status: "finished", text };
   } catch (err) {
-    if (err instanceof CursorAgentError) return { ok: false, text: "", error: err.message };
-    return { ok: false, text: "", error: err.message };
+    const isCAE = err instanceof CursorAgentError;
+    return { ok: false, status: isCAE ? "startup_error" : "exception", text: "", error: err.message };
   }
 }
 
@@ -117,9 +136,19 @@ export async function ceoExecDoc(ceo, goal, workers, apiKey, opts = {}) {
     ? `\n# 可用团队技能（已自动匹配，必要时按这些方法设计执行文档）\n${opts.skillContext}\n`
     : "";
 
+  const cwd = opts.cwd || process.cwd();
+  const groundingRule = `# 第一步：先摸清现有基础（最重要，别跳过，但要快）
+你的工作目录是 \`${cwd}\`。在动笔写计划之前，**先去看目标/对话里提到的那个具体项目目录**，把相关的现成产物读出来——脚本、分镜、candidates、之前生成的文件、outputs 等。
+- **直奔相关路径**：根据目标/对话里提到的位置直接进到那个项目文件夹，只读最相关的少数几个文件。**不要漫无目的地扫描整个 home 目录**，调研要快——几步之内就够，然后立刻开始写文档。
+- 你的计划必须**建立在这些已有成果之上做增量**，而不是从零另起炉灶。
+- 每个任务都要说清是「在现有的哪个具体文件上改/补什么」还是「确实需要新建什么」，优先复用和升级已有的东西。
+- 如果确实没找到相关现成材料，就在「现有基础」里如实写明「未发现现成材料，从零开始」。
+- 无论如何，最后**必须输出下面那份完整的执行文档 Markdown**——不要只说「我去看一下/正在写」就结束。
+`;
   const prompt = `你是「${ceo.name}」。${ceo.persona || ceo.role}
 用第一性原理把用户的目标变成一份**简洁有力、可直接执行的「执行文档」**，然后分配给团队。
 
+${groundingRule}
 # 团队成员
 ${roster}
 ${convoBlock}
@@ -131,6 +160,9 @@ ${goal}
 
 严格用下面的 Markdown 结构输出（中文，直接、具体、可衡量，不要寒暄、不要解释你在做什么）：
 
+## 📍 现有基础
+- （列出你实际看到的相关文件/产物及其现状；没有就写「未发现现成材料，从零开始」）
+
 ## 🎯 目标
 （一句话把目标说清楚，带可衡量结果）
 
@@ -140,7 +172,7 @@ ${goal}
 ## 🗂 任务拆解
 | # | 负责人 | 任务 | 交付标准 |
 |---|--------|------|----------|
-（3-5 行，负责人只能从上面团队成员里选，任务要具体到能直接动手）
+（3-5 行，负责人只能从上面团队成员里选；每条任务写清「在现有的哪个文件上改/补」还是「新建」，要具体到能直接动手）
 
 ## ✅ 验收标准
 - （2-3 条可检验的标准）
@@ -153,12 +185,31 @@ ${goal}
   const fallback = `## 🎯 目标\n${goal}\n\n## 🗂 任务拆解\n| # | 负责人 | 任务 | 交付标准 |\n|---|--------|------|----------|\n| 1 | 团队 | 落地这个目标 | 可用的交付物 |`;
   try {
     // create+send (not Agent.prompt) so the caller gets a run handle to cancel.
-    const agent = await Agent.create({ apiKey: key, model: { id: ceo.model }, mode: "plan" });
+    // local.cwd lets the CEO actually READ existing work to ground the plan.
+    const agent = await Agent.create({ apiKey: key, model: { id: ceo.model }, mode: "plan", local: { cwd } });
     const run = await agent.send(prompt, { mode: "plan" });
     if (typeof opts.onRun === "function") opts.onRun(run);
+
+    // Capture streamed text so the doc isn't lost if result.result ends up being
+    // a transitional line (e.g. after the agent did file-read tool calls).
+    let best = "";
+    try {
+      for await (const m of run.stream()) {
+        if (m.type === "assistant" && m.message?.content) {
+          const txt = m.message.content.filter((b) => b.type === "text").map((b) => b.text).join("");
+          // Prefer the most "doc-like" message (longest one that has our headings).
+          if (txt && (txt.includes("## ") ? txt.length > best.length : best.length === 0)) best = txt;
+          if (typeof opts.onStream === "function") opts.onStream({ kind: "text", text: txt });
+        }
+      }
+    } catch { /* cancel/stream end */ }
+
     const result = await run.wait();
     try { agent.close?.(); } catch {}
-    return (result.result || "").trim() || fallback;
+    const finalText = (result.result || "").trim();
+    // Pick whichever actually looks like the execution doc.
+    const docLike = [finalText, best].filter((t) => t && t.includes("## ")).sort((a, b) => b.length - a.length)[0];
+    return docLike || finalText || best.trim() || fallback;
   } catch {
     return fallback;
   }
