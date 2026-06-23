@@ -121,7 +121,7 @@ async function init() {
   $("#setWsBase").value = SETTINGS.workspaceBase || "~";
   SCHEDULE = await api.getSchedule();
 
-  bindNav(); bindChat(); bindBoard(); bindSchedule(); bindAgents(); bindEditor(); bindSettings(); bindDetail(); bindSkills(); bindSelfEdit();
+  bindNav(); bindChat(); bindBoard(); bindSchedule(); bindAgents(); bindEditor(); bindSettings(); bindDetail(); bindSkills(); bindSelfEdit(); bindObjectives();
   api.onCeoEvent(handleCeoEvent);
   api.onCrewEvent(handleCrewEvent);
   api.onSchedEvent(handleSchedEvent);
@@ -146,6 +146,7 @@ function show(view) {
   if (view === "agents") renderAgents();
   if (view === "skills") renderSkills();
   if (view === "runs") renderRuns();
+  if (view === "objectives") renderObjectives();
   if (view === "selfedit") renderSelfEdit();
   if (view === "usage") renderUsage();
 }
@@ -556,6 +557,7 @@ async function discardIdea(id) {
 }
 
 function handleCrewEvent(ev) {
+  if (ev && ev.objectiveId) { objHandleEvent(ev); return; }
   if (ev && ev.selfEditId) { seHandleEvent(ev); return; }
   const txt = document.querySelector(".kcard.running .kcard-live-txt");
   if (txt) {
@@ -1239,6 +1241,224 @@ async function discardSelfEditUI(id) {
   toast("已丢弃", "info");
   if (seDetailId === id) { seDetailId = null; $("#seDetail").innerHTML = `<div class="se-empty">已丢弃。</div>`; }
   await renderSelfEdit();
+}
+
+// ---------------------------------------------------------------- objective loop (目标循环)
+let OBJECTIVES = [];
+let objDetailId = null;
+let objRunning = false;
+let objProgress = [];
+
+const OBJ_STATUS = { active: ["进行中", "ready"], done: ["已达成", "done"], gaveup: ["已放弃", "bad"], paused: ["已暂停", "muted"] };
+
+function bindObjectives() {
+  $("#objNew").onclick = showObjForm;
+}
+
+async function renderObjectives() {
+  OBJECTIVES = await api.objList();
+  renderObjList();
+  $("#objDot").classList.toggle("on", objRunning);
+  if (objDetailId && OBJECTIVES.some((o) => o.id === objDetailId)) openObjective(objDetailId);
+}
+
+function objChip(s) { const [l, c] = OBJ_STATUS[s] || [s, "muted"]; return `<span class="se-chip ${c}">${esc(l)}</span>`; }
+
+function renderObjList() {
+  const host = $("#objList");
+  if (!OBJECTIVES.length) { host.innerHTML = `<div class="se-list-empty">还没有目标。点右上「+ 新目标」开始。</div>`; return; }
+  host.innerHTML = "";
+  OBJECTIVES.forEach((o) => {
+    const item = el("div", "se-item" + (o.id === objDetailId ? " active" : ""));
+    const kindCN = o.kind === "self-edit" ? "自改" : "干活";
+    item.innerHTML = `<div class="se-item-goal">${esc((o.title || o.northStar || "").slice(0, 80))}</div>
+      <div class="se-item-meta">${objChip(o.status)}<span class="obj-kind">${kindCN}</span><span class="se-item-time">${rel(o.createdAt)}</span></div>`;
+    item.onclick = () => { objDetailId = o.id; renderObjList(); openObjective(o.id); };
+    host.appendChild(item);
+  });
+}
+
+async function showObjForm() {
+  const ws = await api.listWorkspaces();
+  const wsOpts = ws.map((w) => `<option value="${w.id}">${esc((w.emoji || "") + " " + w.name)}</option>`).join("");
+  $("#objDetail").innerHTML = `
+    <div class="obj-form">
+      <h2>新目标</h2>
+      <label class="fl">北极星（你最终想要什么）</label>
+      <textarea id="ofNorth" class="se-goal" placeholder="例如：通过小红书内容带来真实的付费咨询订单；或：让这个 App 的看板更好用。"></textarea>
+      <label class="fl">怎么干</label>
+      <select id="ofKind"><option value="crew">在一个工作区里干活</option><option value="self-edit">修改 App 自己的源码</option></select>
+      <div id="ofWsRow"><label class="fl">工作区</label><select id="ofWs">${wsOpts || '<option value="">（没有工作区，先去看板/项目建一个）</option>'}</select></div>
+      <label class="fl">每轮怎么验证</label>
+      <select id="ofVerify"><option value="human">我来人工打分（推荐：真实信号）</option><option value="auto">让审查员自动判定（SHIP=通过）</option></select>
+      <label class="fl">最多循环几轮</label>
+      <input id="ofMax" type="number" min="1" max="50" value="10" />
+      <div class="se-compose-actions">
+        <button id="ofCreate" class="btn primary">创建并开始</button>
+        <button id="ofCancel" class="btn ghost">取消</button>
+      </div>
+    </div>`;
+  const syncKind = () => {
+    const k = $("#ofKind").value;
+    $("#ofWsRow").classList.toggle("hidden", k !== "crew");
+    $("#ofVerify").disabled = k === "self-edit";
+    if (k === "self-edit") $("#ofVerify").value = "auto";
+  };
+  $("#ofKind").onchange = syncKind; syncKind();
+  $("#ofCancel").onclick = () => { objDetailId = null; renderObjectives(); $("#objDetail").innerHTML = `<div class="se-empty">选择左边一个目标，或新建一个。</div>`; };
+  $("#ofCreate").onclick = createObjectiveUI;
+}
+
+async function createObjectiveUI() {
+  const northStar = $("#ofNorth").value.trim();
+  if (!northStar) { toast("先写下北极星目标", "warn"); return; }
+  const kind = $("#ofKind").value;
+  const workspaceId = kind === "crew" ? $("#ofWs").value : "";
+  if (kind === "crew" && !workspaceId) { toast("请选择一个工作区", "warn"); return; }
+  const o = await api.objCreate({
+    northStar, title: northStar.slice(0, 50), kind, workspaceId,
+    autoVerify: $("#ofVerify").value === "auto",
+    maxIterations: Number($("#ofMax").value) || 10,
+  });
+  objDetailId = o.id;
+  await renderObjectives();
+  openObjective(o.id);
+  objStepUI(o.id);   // kick off the first iteration immediately
+}
+
+function pushObjProgress(line) {
+  objProgress.push(line);
+  const host = $("#objProgress");
+  if (!host) return;
+  host.innerHTML = objProgress.slice(-14).map((p) => `<div class="se-prog-line">${esc(p)}</div>`).join("");
+  host.scrollTop = host.scrollHeight;
+}
+
+function objHandleEvent(ev) {
+  if (ev.type === "loop-propose-start") pushObjProgress("规划下一步…");
+  else if (ev.type === "loop-propose-done") pushObjProgress("下一步：" + (ev.task || ""));
+  else if (ev.type === "loop-execute-start") pushObjProgress("执行中…");
+  else if (ev.type === "task-start") pushObjProgress("· " + (ev.agent || "") + "：" + ((ev.task && ev.task.title) || ""));
+  else if (ev.type === "task-stream") { if (ev.kind === "tool") pushObjProgress("· 调用 " + (ev.name || "")); }
+  else if (ev.type === "loop-execute-done") pushObjProgress("执行完成");
+  else if (ev.type === "loop-verify-start") pushObjProgress("验证中…");
+  else if (ev.type === "loop-verify-pending") pushObjProgress("⏸ 等你人工打分");
+  else if (ev.type === "loop-verify-done") pushObjProgress("验证：" + (ev.ok ? "✓ 通过" : "✗ 未过"));
+  else if (ev.type === "loop-reflect-done") pushObjProgress("复盘：" + (ev.note || ""));
+  else if (ev.type === "loop-done") pushObjProgress("✓ 北极星达成");
+  else if (ev.type === "error") pushObjProgress("✗ " + (ev.error || "出错"));
+}
+
+async function openObjective(id) {
+  const { objective, journal } = await api.objGet(id);
+  if (!objective) { $("#objDetail").innerHTML = `<div class="se-empty">目标不存在。</div>`; return; }
+  renderObjDetail(objective, journal || []);
+}
+
+function verifyVerdict(v) {
+  if (!v) return "";
+  if (v.pending) return `<span class="se-gate-badge bad">⏸ 待人工打分</span>`;
+  const cls = v.ok ? "ok" : "bad";
+  const sc = (v.score != null) ? ` · 分 ${v.score}` : "";
+  return `<span class="se-gate-badge ${cls}">${v.ok ? "✓ 通过" : "✗ 未过"}${sc}</span>`;
+}
+
+function renderObjDetail(o, journal) {
+  const pending = journal.find((e) => e.verify && e.verify.pending);
+  const completed = journal.filter((e) => !(e.verify && e.verify.pending)).length;
+  const canRun = o.status === "active" && !objRunning && !pending;
+  let html = `<div class="se-detail-head">
+    <div class="se-detail-goal">${esc(o.northStar)}</div>
+    <div class="se-detail-sub">${objChip(o.status)}<span class="sub">${o.kind === "self-edit" ? "自改源码" : "干活"} · 第 ${completed}/${o.maxIterations} 轮 · ${o.autoVerify ? "自动验证" : "人工打分"}</span></div>
+  </div>`;
+
+  html += `<div class="se-actions">`;
+  if (canRun) html += `<button class="btn primary" id="objStep">▶ 跑一轮</button><button class="btn ghost" id="objLoop">⏩ 连跑到停</button>`;
+  if (objRunning) html += `<button class="btn ghost" id="objCancel">■ 取消</button>`;
+  if (o.status === "active" && !objRunning) html += `<button class="btn ghost" id="objGiveUp">放弃目标</button>`;
+  html += `<button class="btn ghost danger" id="objDelete">删除</button></div>`;
+
+  html += `<div id="objProgress" class="se-progress"></div>`;
+
+  if (pending) {
+    html += `<div class="obj-score panel">
+      <div class="obj-score-head">⏸ 这一轮做完了，需要你给真实信号</div>
+      <div class="obj-score-task">${esc(pending.task)}</div>
+      <div class="obj-score-row">
+        <label><input type="radio" name="objOk" value="1" checked> 有效（更接近北极星）</label>
+        <label><input type="radio" name="objOk" value="0"> 无效</label>
+      </div>
+      <label class="fl">打分 0–1（这步贡献多大）</label>
+      <input id="objScoreVal" type="number" min="0" max="1" step="0.1" value="0.6" />
+      <label class="fl">真实情况 / 证据（卖了几单、来了几个咨询、数据怎样…）</label>
+      <textarea id="objScoreNotes" class="se-goal" placeholder="给团队下一轮参考的真实结果。"></textarea>
+      <div class="se-compose-actions"><button class="btn primary" id="objScoreSubmit">提交评分，继续循环</button></div>
+    </div>`;
+  }
+
+  // journal timeline
+  html += `<div class="se-files-head">历程（${journal.length} 轮）</div>`;
+  if (!journal.length) html += `<div class="se-empty">还没开始。点「跑一轮」让团队拆出第一步。</div>`;
+  else html += `<div class="obj-journal">` + journal.slice().reverse().map((e) => `
+    <div class="obj-entry">
+      <div class="obj-entry-top"><span class="obj-entry-n">#${e.n}</span><span class="obj-entry-task">${esc(e.task)}</span>${verifyVerdict(e.verify)}</div>
+      ${e.exec && e.exec.summary ? `<div class="obj-entry-exec">${esc(e.exec.summary)}</div>` : ""}
+      ${e.verify && e.verify.notes ? `<div class="obj-entry-notes">验证：${esc(e.verify.notes)}</div>` : ""}
+      ${e.reflection ? `<div class="obj-entry-reflect">复盘：${esc(e.reflection)}</div>` : ""}
+    </div>`).join("") + `</div>`;
+
+  $("#objDetail").innerHTML = html;
+  if (objProgress.length) pushObjProgress("");  // re-render progress buffer
+
+  const sb = $("#objStep"); if (sb) sb.onclick = () => objStepUI(o.id);
+  const lb = $("#objLoop"); if (lb) lb.onclick = () => objLoopUI(o.id);
+  const cb = $("#objCancel"); if (cb) cb.onclick = async () => { await api.objCancel(); toast("正在取消…", "info"); };
+  const gb = $("#objGiveUp"); if (gb) gb.onclick = async () => { if (confirm("放弃这个目标？")) { await api.objUpdate(o.id, { status: "gaveup" }); renderObjectives(); } };
+  const db = $("#objDelete"); if (db) db.onclick = async () => { if (confirm("删除这个目标及其全部历程？")) { await api.objDelete(o.id); objDetailId = null; await renderObjectives(); $("#objDetail").innerHTML = `<div class="se-empty">已删除。</div>`; } };
+  const ss = $("#objScoreSubmit"); if (ss) ss.onclick = () => objScoreUI(o.id);
+}
+
+async function objStepUI(id) {
+  if (objRunning) { toast("已有一轮在跑", "warn"); return; }
+  objRunning = true; objProgress = [];
+  $("#objDot").classList.add("on");
+  await openObjective(id);
+  pushObjProgress("开始这一轮…");
+  let res;
+  try { res = await api.objStep(id); }
+  finally { objRunning = false; $("#objDot").classList.remove("on"); }
+  if (!res || !res.ok) { toast("这一轮失败：" + ((res && res.error) || "未知"), "error", 8000); pushObjProgress("✗ " + ((res && res.error) || "失败")); await openObjective(id); return; }
+  const k = res.result && res.result.kind;
+  await renderObjectives();
+  if (k === "objective-done") toast("北极星达成 ✓", "info", 7000);
+  else if (k === "gave-up") toast("团队判断此路不通，已放弃", "warn", 7000);
+  else if (k === "await-human") toast("这一轮做完了，去给个真实评分让它继续", "info", 7000);
+  else if (k === "max-reached") toast("已到最大轮数", "info");
+}
+
+async function objLoopUI(id) {
+  if (objRunning) { toast("已有循环在跑", "warn"); return; }
+  objRunning = true; objProgress = [];
+  $("#objDot").classList.add("on");
+  await openObjective(id);
+  pushObjProgress("连续循环中（遇到需要你打分会停下）…");
+  let res;
+  try { res = await api.objLoop(id, 5); }
+  finally { objRunning = false; $("#objDot").classList.remove("on"); }
+  if (!res || !res.ok) { toast("循环出错：" + ((res && res.error) || "未知"), "error", 8000); }
+  await renderObjectives();
+}
+
+async function objScoreUI(id) {
+  const okEl = document.querySelector('input[name="objOk"]:checked');
+  const ok = okEl ? okEl.value === "1" : true;
+  const score = Number($("#objScoreVal").value);
+  const notes = $("#objScoreNotes").value.trim();
+  const res = await api.objScore(id, { ok, score, notes });
+  if (!res || !res.ok) { toast("提交失败：" + ((res && res.error) || "未知"), "error"); return; }
+  toast("已记录，继续下一轮", "info");
+  await openObjective(id);
+  objStepUI(id);   // auto-continue
 }
 
 init();

@@ -451,3 +451,25 @@ textarea.tall { min-height: 120px; }
 .se-diff .dl.hunk { color: #8b7bff; }
 .se-diff .dl.meta { color: #6f7486; }
 .se-review { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 12px 14px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+
+/* ---------------- objective loop (目标循环) ---------------- */
+.obj-layout { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 0 24px 24px; min-height: 0; flex: 1; overflow: hidden; }
+.obj-list { overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+.obj-detail { overflow-y: auto; min-height: 0; }
+.obj-kind { font-size: 11px; color: var(--faint); padding: 1px 7px; border: 1px solid var(--line); border-radius: 999px; }
+.obj-form h2 { font-size: 17px; margin-bottom: 12px; }
+.obj-form .fl { margin-top: 12px; }
+.obj-form select, .obj-form input[type=number] { width: 100%; padding: 9px 11px; border: 1px solid var(--line-2); border-radius: var(--r-sm); font-size: 13px; background: var(--surface); margin-top: 4px; }
+.obj-score { margin: 4px 0 16px; padding: 14px 16px; border: 1px solid var(--accent); background: var(--accent-soft); border-radius: var(--r-sm); }
+.obj-score-head { font-weight: 700; color: var(--accent); margin-bottom: 8px; }
+.obj-score-task { font-size: 13px; margin-bottom: 10px; color: var(--text); }
+.obj-score-row { display: flex; gap: 18px; font-size: 13px; margin-bottom: 4px; }
+.obj-score-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.obj-journal { display: flex; flex-direction: column; gap: 9px; }
+.obj-entry { border: 1px solid var(--line); border-radius: var(--r-sm); padding: 11px 13px; background: var(--surface); }
+.obj-entry-top { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.obj-entry-n { font-family: var(--mono); font-size: 12px; color: var(--faint); }
+.obj-entry-task { font-weight: 600; font-size: 13px; flex: 1; min-width: 200px; }
+.obj-entry-exec, .obj-entry-notes, .obj-entry-reflect { font-size: 12.5px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
+.obj-entry-reflect { color: var(--text); border-left: 2px solid var(--accent-2); padding-left: 9px; }
+.btn.ghost.danger { color: var(--failed); }

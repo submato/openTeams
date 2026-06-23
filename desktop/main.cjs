@@ -297,6 +297,33 @@ function registerIpc() {
   });
   ipcMain.handle("selfedit:discard", async (_e, id) => (await loadStore()).discardSelfEdit(id));
 
+  // Objective loop (the reusable closed-loop engine). Live events on crew:event.
+  ipcMain.handle("obj:list", async () => (await loadStore()).listObjectives());
+  ipcMain.handle("obj:get", async (_e, id) => {
+    const s = await loadStore();
+    return { objective: s.getObjective(id), journal: s.getObjectiveJournal(id) };
+  });
+  ipcMain.handle("obj:create", async (_e, p) => (await loadStore()).createObjective(p));
+  ipcMain.handle("obj:update", async (_e, id, patch) => (await loadStore()).updateObjective(id, patch));
+  ipcMain.handle("obj:delete", async (_e, id) => (await loadStore()).deleteObjective(id));
+  ipcMain.handle("obj:step", async (_e, id) => {
+    if (!process.env.CURSOR_API_KEY) return { ok: false, error: "缺少 CURSOR_API_KEY（在 ai-team/.env 设置）" };
+    const s = await loadStore();
+    try { return { ok: true, result: await s.runObjectiveStep(id, process.env.CURSOR_API_KEY, (evt) => send("crew:event", evt)) }; }
+    catch (err) { send("crew:event", { type: "error", error: err.message }); return { ok: false, error: err.message }; }
+  });
+  ipcMain.handle("obj:loop", async (_e, id, maxSteps) => {
+    if (!process.env.CURSOR_API_KEY) return { ok: false, error: "缺少 CURSOR_API_KEY（在 ai-team/.env 设置）" };
+    const s = await loadStore();
+    try { return { ok: true, result: await s.runObjectiveLoop(id, process.env.CURSOR_API_KEY, (evt) => send("crew:event", evt), maxSteps || 5) }; }
+    catch (err) { return { ok: false, error: err.message }; }
+  });
+  ipcMain.handle("obj:score", async (_e, id, score) => {
+    const s = await loadStore();
+    try { return { ok: true, entry: s.scoreObjectiveStep(id, score) }; } catch (err) { return { ok: false, error: err.message }; }
+  });
+  ipcMain.handle("obj:cancel", async () => (await loadStore()).cancelObjective());
+
   // Legacy 1:1 chat (Agents page)
   ipcMain.handle("chat:send", async (_e, agentId, history, message) => {
     if (!process.env.CURSOR_API_KEY) return { ok: false, error: "Missing CURSOR_API_KEY" };

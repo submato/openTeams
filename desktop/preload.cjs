@@ -87,6 +87,17 @@ contextBridge.exposeInMainWorld("api", {
   selfEditApply: (id) => ipcRenderer.invoke("selfedit:apply", id),
   selfEditDiscard: (id) => ipcRenderer.invoke("selfedit:discard", id),
 
+  // Objective loop (reusable closed-loop engine)
+  objList: () => ipcRenderer.invoke("obj:list"),
+  objGet: (id) => ipcRenderer.invoke("obj:get", id),
+  objCreate: (p) => ipcRenderer.invoke("obj:create", p),
+  objUpdate: (id, patch) => ipcRenderer.invoke("obj:update", id, patch),
+  objDelete: (id) => ipcRenderer.invoke("obj:delete", id),
+  objStep: (id) => ipcRenderer.invoke("obj:step", id),
+  objLoop: (id, maxSteps) => ipcRenderer.invoke("obj:loop", id, maxSteps),
+  objScore: (id, score) => ipcRenderer.invoke("obj:score", id, score),
+  objCancel: () => ipcRenderer.invoke("obj:cancel"),
+
   // Per-workspace chat history (project view reference; legacy)
   chatHistory: (wsId) => ipcRenderer.invoke("chat:history", wsId),
   chatSaveHistory: (wsId, history) => ipcRenderer.invoke("chat:save", wsId, history),

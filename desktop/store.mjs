@@ -16,6 +16,8 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { SEED_AGENTS, AVAILABLE_TOOLS, AVAILABLE_MODELS } from "../src/agents.mjs";
 import { kickoff } from "../src/crew.mjs";
+import { runAgentTurn } from "../src/runner.mjs";
+import { runIteration, summarizeJournal } from "./loop.mjs";
 import selfEdit from "./selfedit.cjs";
 import { chatTurn, ceoChatTurn, ceoExecDoc } from "../src/chat.mjs";
 import { decideCeoAction, classifyWorkspace } from "../src/router.mjs";
@@ -1640,4 +1642,235 @@ export function discardSelfEdit(id) {
     rec.status = "discarded"; writeSelfEdit(rec);
   }
   return true;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// OBJECTIVE LOOP — the reusable closed-loop engine (loop.mjs) wired to real
+// adapters. An "objective" is an open-ended north star the team pursues over
+// many iterations: propose next task → execute → VERIFY → reflect → repeat.
+//
+//   kind "crew"      → execute = run the crew in a workspace;
+//                      verify  = human score (the "帮我赚钱" path) OR, if
+//                      autoVerify, the reviewer's SHIP/FIX/KILL verdict.
+//   kind "self-edit" → execute = produce a gated self-edit candidate;
+//                      verify  = the safety gate (auto).
+//
+// Same control flow, swappable verification. That is the whole point.
+// ──────────────────────────────────────────────────────────────────────────
+const objectivesPath = () => path.join(ROOT, "objectives.json");
+const objJournalPath = (id) => path.join(ROOT, "objectives", `${id}.json`);
+let objectiveCtrl = null;
+
+function extractJsonLoose(text) {
+  if (!text) return null;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const cand = fenced ? fenced[1] : text;
+  const start = cand.search(/[[{]/);
+  if (start === -1) return null;
+  const slice = cand.slice(start);
+  try { return JSON.parse(slice); } catch {}
+  const end = Math.max(slice.lastIndexOf("]"), slice.lastIndexOf("}"));
+  if (end === -1) return null;
+  try { return JSON.parse(slice.slice(0, end + 1)); } catch { return null; }
+}
+
+export function listObjectives() { ensure(); return readJson(objectivesPath(), []); }
+export function getObjective(id) { return listObjectives().find((o) => o.id === id) || null; }
+function saveObjectives(arr) { writeJson(objectivesPath(), arr); }
+export function getObjectiveJournal(id) { return readJson(objJournalPath(id), []); }
+function writeJournal(id, j) { writeJson(objJournalPath(id), j); }
+
+export function createObjective(p = {}) {
+  ensure();
+  const all = listObjectives();
+  const id = `obj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const o = {
+    id,
+    title: (p.title || p.northStar || "目标").slice(0, 60),
+    northStar: p.northStar || "",
+    kind: p.kind === "self-edit" ? "self-edit" : (p.kind === "mock" ? "mock" : "crew"),
+    workspaceId: p.workspaceId || "",
+    autoVerify: !!p.autoVerify,
+    maxIterations: Math.max(1, Math.min(50, Number(p.maxIterations) || 10)),
+    status: "active",            // active | paused | done | gaveup
+    createdAt: Date.now(), updatedAt: Date.now(),
+  };
+  all.push(o); saveObjectives(all); writeJournal(id, []);
+  return o;
+}
+export function updateObjective(id, patch = {}) {
+  const all = listObjectives();
+  const i = all.findIndex((o) => o.id === id);
+  if (i === -1) return null;
+  all[i] = { ...all[i], ...patch, id, updatedAt: Date.now() };
+  saveObjectives(all);
+  return all[i];
+}
+export function deleteObjective(id) {
+  saveObjectives(listObjectives().filter((o) => o.id !== id));
+  try { fs.unlinkSync(objJournalPath(id)); } catch {}
+  return true;
+}
+export function cancelObjective() {
+  if (!objectiveCtrl) return false;
+  objectiveCtrl.cancelled = true;
+  return true;
+}
+
+// --- the strategist (propose / reflect) runs on the crew manager ----------
+async function strategistTurn(objective, description, expectedOutput, apiKey) {
+  const { manager } = resolveCrew();
+  if (!manager) throw new Error("没有可用的指挥官（在员工库/编队里配置），策略层需要它来规划");
+  const ws = objective.workspaceId ? getWorkspace(objective.workspaceId) : null;
+  const cwd = ws?.cwdAbs || SRC_REPO;
+  const res = await runAgentTurn(manager, { description, expectedOutput }, "", cwd, { apiKey, mode: "plan", store: await sdkStore() });
+  if (!res.ok) throw new Error("策略层调用失败：" + res.error);
+  return extractJsonLoose(res.text) || {};
+}
+
+async function proposeNextStep(objective, journal, apiKey) {
+  const hist = summarizeJournal(journal) || "（还没有任何尝试）";
+  const j = await strategistTurn(
+    objective,
+    `你在为一个长期目标做"下一步规划"。北极星目标：\n"""\n${objective.northStar}\n"""\n\n到目前为止的历程（最近几轮）：\n${hist}\n\n请决定"下一步要做的、单一且具体的任务"。要求：\n- 一次只提一个能在一轮内完成、且能被验证的具体任务（不要给宽泛方向）。\n- 若北极星已达成，返回 done=true。\n- 若反复失败、判断此路不通，返回 giveUp=true 并说明原因。`,
+    `只返回 JSON：{ "task": "下一步具体任务", "rationale": "为什么是这一步", "done": false, "giveUp": false }`,
+    apiKey
+  );
+  return { task: j.task || "", rationale: j.rationale || "", done: !!j.done, giveUp: !!j.giveUp };
+}
+
+async function reflectStep(objective, { task, exec, verify }, apiKey) {
+  try {
+    const j = await strategistTurn(
+      objective,
+      `北极星：${objective.northStar}\n刚做的任务：${task}\n执行：${exec?.ok ? "完成" : "未完成"} ${exec?.summary || ""}\n验证：${verify?.ok ? "通过" : "未通过"} 分数=${verify?.score ?? "?"} ${verify?.notes || ""}\n\n用一两句话复盘：学到了什么、是否更接近北极星、下一步该怎么调整。`,
+      `只返回 JSON：{ "note": "复盘要点", "northStarMet": false }`,
+      apiKey
+    );
+    return { note: j.note || "", northStarMet: !!j.northStarMet };
+  } catch (e) { return { note: "(反思失败：" + e.message + ")", northStarMet: false }; }
+}
+
+// --- adapters: per-kind execute + verify (propose/reflect shared) ----------
+function objectiveAdapter(objective, apiKey, onEvent) {
+  const shared = {
+    propose: ({ journal }) => proposeNextStep(objective, journal, apiKey),
+    reflect: (a) => reflectStep(objective, a, apiKey),
+  };
+
+  if (objective.kind === "self-edit") {
+    return {
+      ...shared,
+      execute: async ({ task }) => {
+        const cand = await startSelfEdit(task, apiKey, onEvent);
+        return { ok: cand.status === "ready", ref: cand.id, refKind: "selfedit", summary: `自改 ${cand.status}`, candidate: cand };
+      },
+      verify: async ({ exec }) => {
+        const g = exec.candidate && exec.candidate.gate;
+        const ok = !!(g && g.ok);
+        return { ok, score: ok ? 1 : 0, evidence: "gate", notes: g ? g.checks.filter((c) => !c.ok).map((c) => `${c.name}:${c.detail}`).join("; ") || "安全闸通过" : "无安全闸结果" };
+      },
+    };
+  }
+
+  if (objective.kind === "mock") {
+    // Test-only adapter: deterministic, no API. Not offered in the UI.
+    return {
+      propose: async ({ journal }) => (journal.length >= 3 ? { done: true, rationale: "mock done" } : { task: "mock step " + (journal.length + 1), rationale: "mock" }),
+      execute: async ({ task }) => ({ ok: true, ref: "mock-" + task, summary: task }),
+      verify: async () => (objective.autoVerify ? { ok: true, score: 1, notes: "mock auto" } : { pending: true }),
+      reflect: async () => ({ note: "mock reflection", northStarMet: false }),
+    };
+  }
+
+  // default: crew adapter
+  return {
+    ...shared,
+    execute: async ({ task }) => {
+      const { run, stamp } = await runCrew(objective.workspaceId, task, onEvent, apiKey, { idea: task });
+      const failed = (run.results || []).some((r) => !r.ok);
+      return { ok: !failed, ref: stamp, refKind: "mission", wsId: objective.workspaceId, review: run.review || "", summary: run.review ? String(run.review).slice(0, 300) : (failed ? "有任务失败" : "完成") };
+    },
+    verify: async ({ exec }) => {
+      if (objective.autoVerify) {
+        const vd = (exec.review || "").match(/VERDICT:?\s*(SHIP|FIX|KILL)/i)?.[1]?.toUpperCase() || "";
+        return { ok: vd === "SHIP", score: vd === "SHIP" ? 1 : (vd === "FIX" ? 0.5 : 0), evidence: "reviewer", notes: "审查结论 " + (vd || "无") };
+      }
+      return { pending: true };   // the human supplies the real-world signal
+    },
+  };
+}
+
+function execSummary(exec) {
+  if (!exec) return {};
+  return { ok: !!exec.ok, ref: exec.ref || "", refKind: exec.refKind || "", wsId: exec.wsId || "", summary: exec.summary || "" };
+}
+function journalEntryFrom(r) {
+  return {
+    n: r.n, task: r.task || (r.proposal && r.proposal.task) || "", rationale: (r.proposal && r.proposal.rationale) || "",
+    exec: execSummary(r.exec), verify: r.verify || {}, reflection: (r.reflection && r.reflection.note) || "",
+    createdAt: Date.now(),
+  };
+}
+
+// Run ONE iteration of an objective; persist the outcome to its journal.
+export async function runObjectiveStep(id, apiKey, onEvent) {
+  ensure();
+  const objective = getObjective(id);
+  if (!objective) throw new Error("目标不存在");
+  if (objective.kind === "crew" && !objective.workspaceId) throw new Error("请先为该目标选择一个工作区");
+  if (objective.status === "done" || objective.status === "gaveup") return { kind: objective.status === "done" ? "objective-done" : "gave-up", finished: true };
+
+  const journal = getObjectiveJournal(id);
+  if (journal.some((e) => e.verify && e.verify.pending)) return { kind: "await-human", pending: true };
+  const completed = journal.filter((e) => !(e.verify && e.verify.pending)).length;
+  if (completed >= objective.maxIterations) return { kind: "max-reached", max: objective.maxIterations };
+
+  const ctrl = { cancelled: false };
+  objectiveCtrl = ctrl;
+  const emit = (ev) => { try { onEvent && onEvent({ objectiveId: id, ...ev, at: ev.at || Date.now() }); } catch {} };
+  const deps = objectiveAdapter(objective, apiKey, emit);
+  try {
+    const r = await runIteration({ objective, journal, deps, onEvent: emit, isCancelled: () => ctrl.cancelled });
+    if (r.kind === "iterated") {
+      appendObjectiveJournal(id, journalEntryFrom(r));
+    } else if (r.kind === "await-human") {
+      appendObjectiveJournal(id, {
+        n: r.n, task: r.task, rationale: (r.proposal && r.proposal.rationale) || "",
+        exec: execSummary(r.exec), verify: { pending: true }, reflection: "", createdAt: Date.now(),
+      });
+    } else if (r.kind === "objective-done") {
+      updateObjective(id, { status: "done" });
+    } else if (r.kind === "gave-up") {
+      updateObjective(id, { status: "gaveup" });
+    }
+    return r;
+  } finally { if (objectiveCtrl === ctrl) objectiveCtrl = null; }
+}
+
+function appendObjectiveJournal(id, entry) { const j = getObjectiveJournal(id); j.push(entry); writeJournal(id, j); return entry; }
+
+// Human supplies the verification signal for a pending step (the "make money"
+// loop's crux): record it as the verdict so the loop can continue.
+export function scoreObjectiveStep(id, { ok, score, notes } = {}) {
+  ensure();
+  const j = getObjectiveJournal(id);
+  const idx = j.findIndex((e) => e.verify && e.verify.pending);
+  if (idx === -1) throw new Error("没有待人工评分的步骤");
+  j[idx].verify = { ok: !!ok, score: Number(score) || 0, evidence: "human", notes: notes || "" };
+  j[idx].reflection = notes ? `（人工）${notes}` : "（人工评分）";
+  writeJournal(id, j);
+  return j[idx];
+}
+
+// Drive several iterations back-to-back until a stop condition.
+export async function runObjectiveLoop(id, apiKey, onEvent, maxSteps = 5) {
+  const STOP = new Set(["await-human", "objective-done", "gave-up", "max-reached", "error", "cancelled"]);
+  const results = [];
+  for (let i = 0; i < maxSteps; i++) {
+    const r = await runObjectiveStep(id, apiKey, onEvent);
+    results.push(r.kind);
+    if (STOP.has(r.kind)) break;
+  }
+  return { steps: results.length, results };
 }
