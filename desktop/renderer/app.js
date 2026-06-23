@@ -102,8 +102,13 @@ function mdToHtml(src) {
     if (h) { closeList(); const lv = Math.min(3, h[1].length); html += `<h${lv}>${inline(h[2])}</h${lv}>`; continue; }
     const ul = line.match(/^\s*[-*]\s+(.*)$/);
     if (ul) { if (list !== "ul") { closeList(); html += "<ul>"; list = "ul"; } html += `<li>${inline(ul[1])}</li>`; continue; }
-    const ol = line.match(/^\s*\d+\.\s+(.*)$/);
-    if (ol) { if (list !== "ol") { closeList(); html += "<ol>"; list = "ol"; } html += `<li>${inline(ol[1])}</li>`; continue; }
+    const ol = line.match(/^\s*(\d+)\.\s+(.*)$/);
+    if (ol) {
+      // Preserve the first item's number so a list that resumes after some text
+      // (e.g. "3. ...") doesn't silently restart at 1.
+      if (list !== "ol") { closeList(); const start = parseInt(ol[1], 10); html += start > 1 ? `<ol start="${start}">` : "<ol>"; list = "ol"; }
+      html += `<li>${inline(ol[2])}</li>`; continue;
+    }
     const bq = line.match(/^&gt;\s?(.*)$/);
     if (bq) { closeList(); html += `<blockquote>${inline(bq[1])}</blockquote>`; continue; }
     if (t === "") { closeList(); continue; }
