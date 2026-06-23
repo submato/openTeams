@@ -1,0 +1,33 @@
+# --- dependencies & build artifacts ---
+node_modules/
+desktop/node_modules/
+desktop/dist/
+dist/
+
+# --- secrets ---
+.env
+.env.local
+
+# --- logs / os ---
+*.log
+.DS_Store
+
+# === USER DATA (must stay untracked so self-modify rollback never wipes it) ===
+# The self-heal watchdog runs `git reset --hard` to recover from bad self-edits.
+# Only SOURCE CODE is tracked; everything a human/agent produces at runtime is
+# ignored, so a rollback reverts code only and leaves user data intact.
+.sdk-store/
+outputs/
+traces/
+inbox/
+projects/
+workspaces/
+skills/
+agents/
+ideas.json
+ceo-chat.json
+ceo-sessions.json
+crew.json
+settings.json
+workspaces.json
+selfheal.json

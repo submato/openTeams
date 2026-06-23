@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>AI 团队</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app">
+  <!-- ===================== 侧边栏 ===================== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">◆</span>
+      <span class="brand-name">AI 团队</span>
+    </div>
+    <nav class="nav">
+      <div class="nav-group">主控</div>
+      <button class="nav-item" data-view="chat">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>与 CEO 对话</span>
+      </button>
+      <button class="nav-item" data-view="board">
+        <svg viewBox="0 0 24 24" class="ic"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="11" rx="1"/></svg>
+        <span>看板</span><span id="boardBadge" class="nav-badge"></span>
+      </button>
+      <button class="nav-item" data-view="schedule">
+        <svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>
+        <span>定时任务</span><span id="schedDot" class="sched-dot"></span>
+      </button>
+
+      <div class="nav-group">团队</div>
+      <button class="nav-item" data-view="agents">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>员工库</span>
+      </button>
+      <button class="nav-item" data-view="skills">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M14.7 6.3a4 4 0 0 0-5.66 5.66l1.06 1.06"/><path d="M9.3 17.7a4 4 0 0 0 5.66-5.66l-1.06-1.06"/><line x1="8" y1="16" x2="16" y2="8"/></svg>
+        <span>技能库</span>
+      </button>
+
+      <div class="nav-group">记录</div>
+      <button class="nav-item" data-view="runs">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M3 12a9 9 0 1 0 3-7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
+        <span>运行记录</span>
+      </button>
+      <button class="nav-item" data-view="usage">
+        <svg viewBox="0 0 24 24" class="ic"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+        <span>用量</span>
+      </button>
+
+      <div class="nav-spacer"></div>
+      <button class="nav-item" data-view="settings">
+        <svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>设置</span>
+      </button>
+    </nav>
+    <div class="sidebar-foot">
+      <span id="envDot" class="env-dot"></span>
+      <span id="envText" class="env-text">检测中…</span>
+    </div>
+  </aside>
+
+  <!-- ===================== 内容区 ===================== -->
+  <main class="content">
+
+    <!-- ============ 与 CEO 对话 ============ -->
+    <section class="view active" data-view="chat">
+      <div class="chat-layout">
+        <aside class="chat-sessions">
+          <button id="newSession" class="new-session-btn">
+            <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>新对话</span>
+          </button>
+          <div id="sessionList" class="session-list"></div>
+        </aside>
+        <div class="chat-main">
+          <header class="chat-head">
+            <button id="chatPanelToggle" class="icon-btn" title="收起/展开对话列表">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
+            </button>
+            <div class="ceo-ava">E</div>
+            <div class="chat-head-meta">
+              <div class="chat-head-name">Elon · CEO</div>
+              <div class="chat-head-sub">聊天问建议，或切到「派活」让他拟执行文档。</div>
+            </div>
+            <span id="chatStatus" class="chat-status"></span>
+            <button id="chatSideToggle" class="icon-btn" title="对话列表靠左 / 靠右" style="margin-left:auto">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 2 21 6 17 10"/><path d="M3 12V8a2 2 0 0 1 2-2h16"/><polyline points="7 22 3 18 7 14"/><path d="M21 12v4a2 2 0 0 1-2 2H3"/></svg>
+            </button>
+          </header>
+          <div id="chatLog" class="chat-log"></div>
+          <div class="composer">
+            <div class="composer-row">
+              <textarea id="chatInput" rows="1" placeholder="跟 Elon 聊点什么、问问建议… Enter 发送 · Shift+Enter 换行"></textarea>
+              <button id="chatSend" class="btn primary">发送</button>
+            </div>
+            <div class="composer-bar">
+              <div class="mode-seg" id="modeSeg">
+                <button class="seg active" data-mode="auto">✨ 自动</button>
+                <button class="seg" data-mode="chat">💬 聊天</button>
+                <button class="seg" data-mode="task">🚀 派活</button>
+              </div>
+              <span class="composer-hint" id="modeHint">自动判断：该聊就聊，该派活就派活</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 看板 ============ -->
+    <section class="view" data-view="board">
+      <header class="vhead">
+        <div><h1>看板</h1><p class="sub">CEO 拟好的执行文档会变成卡片，在各阶段间推进；被中断的任务可继续或重跑。</p></div>
+        <button id="boardRefresh" class="btn ghost sm">刷新</button>
+      </header>
+      <div class="board">
+        <div class="kcol">
+          <div class="kcol-head"><span class="kdot pending_confirm"></span>待确认<span class="kcount" id="cnt-pending_confirm">0</span></div>
+          <div class="kcol-body" id="col-pending_confirm"></div>
+        </div>
+        <div class="kcol">
+          <div class="kcol-head"><span class="kdot pending"></span>待执行<span class="kcount" id="cnt-pending">0</span></div>
+          <div class="kcol-body" id="col-pending"></div>
+        </div>
+        <div class="kcol">
+          <div class="kcol-head"><span class="kdot running"></span>执行中<span class="kcount" id="cnt-running">0</span></div>
+          <div class="kcol-body" id="col-running"></div>
+        </div>
+        <div class="kcol">
+          <div class="kcol-head"><span class="kdot interrupted"></span>已中断<span class="kcount" id="cnt-interrupted">0</span></div>
+          <div class="kcol-body" id="col-interrupted"></div>
+        </div>
+        <div class="kcol">
+          <div class="kcol-head"><span class="kdot done"></span>执行完<span class="kcount" id="cnt-done">0</span></div>
+          <div class="kcol-body" id="col-done"></div>
+        </div>
+        <div class="kcol">
+          <div class="kcol-head"><span class="kdot failed"></span>失败<span class="kcount" id="cnt-failed">0</span></div>
+          <div class="kcol-body" id="col-failed"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 定时任务 ============ -->
+    <section class="view" data-view="schedule">
+      <header class="vhead">
+        <div><h1>定时任务</h1><p class="sub">让团队按节奏自动从看板取「待执行」卡片去做 —— app 开着就一直跑。</p></div>
+        <button id="autoRunNow" class="btn ghost sm">▶ 立即跑一次</button>
+      </header>
+      <div class="panel sched-panel">
+        <div class="set-row">
+          <div><div class="set-label">启用自动跑</div><div class="set-help">开 = 按下面节奏自动派团队；关掉 app 即停（要真正 7×24 需用 launchd 守护）</div></div>
+          <label class="switch"><input type="checkbox" id="autoEnabled" /><span class="slider"></span></label>
+        </div>
+        <div class="set-row">
+          <div class="set-label">节奏</div>
+          <div class="inline">
+            <select id="autoMode"><option value="interval">每隔几小时</option><option value="daily">每天定点</option></select>
+            <span id="autoIntervalWrap" class="inline">每 <input type="number" id="autoEveryHours" min="1" step="1" /> 小时</span>
+            <span id="autoDailyWrap" class="inline hidden">每天 <input type="time" id="autoDailyAt" /></span>
+          </div>
+        </div>
+        <div class="set-row">
+          <div class="set-label">派什么活</div>
+          <select id="autoSource"><option value="ideas">取看板里最早的待执行卡片</option><option value="prompt">每次都做同一件事</option></select>
+        </div>
+        <div id="autoPromptRow" class="set-row hidden">
+          <div><div class="set-label">固定任务</div><div class="set-help">每次自动跑都把这段话交给 CEO，拟文档并执行</div></div>
+          <textarea id="autoPrompt" placeholder="例如：扫一遍我的待办，挑一个最值得做的小工具做出来"></textarea>
+        </div>
+        <div class="set-row">
+          <div class="set-label">状态</div>
+          <strong id="autoStatus" class="set-value">—</strong>
+        </div>
+      </div>
+      <div class="panel-title">运行日志</div>
+      <div id="autoLog" class="auto-log"></div>
+    </section>
+
+    <!-- ============ 员工库 ============ -->
+    <section class="view" data-view="agents">
+      <header class="vhead">
+        <div><h1>员工库</h1><p class="sub">你的「员工」集合 —— 角色、目标、模型与能力。</p></div>
+        <button id="newAgentBtn" class="btn primary">+ 新建员工</button>
+      </header>
+      <div id="agentGrid" class="agent-grid"></div>
+    </section>
+
+    <!-- ============ 技能库 ============ -->
+    <section class="view" data-view="skills">
+      <header class="vhead">
+        <div><h1>技能库</h1><p class="sub">从 Cursor / Claude / Agents 同步的技能，团队可参考调用。</p></div>
+        <div class="vhead-actions">
+          <span id="skillsSynced" class="sub"></span>
+          <button id="skillsSync" class="btn primary">↻ 同步技能</button>
+        </div>
+      </header>
+
+      <!-- 浏览：搜索 + 分类 + 网格 -->
+      <div id="skillsBrowse">
+        <div class="skills-toolbar">
+          <div class="skills-search-wrap">
+            <svg viewBox="0 0 24 24" class="skills-search-ic"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input id="skillsSearch" class="skills-search" type="search" placeholder="搜索技能名称或描述…" />
+          </div>
+          <div id="skillsCats" class="skills-cats"></div>
+        </div>
+        <div id="skillsGrid" class="skills-grid"></div>
+      </div>
+
+      <!-- 详情 -->
+      <div id="skillsDetail" class="skills-detail hidden">
+        <div class="skills-detail-bar">
+          <button id="skillBack" class="btn ghost sm">← 返回技能库</button>
+          <span id="skillBadge" class="skill-badge"></span>
+        </div>
+        <div id="skillView" class="run-report"></div>
+      </div>
+    </section>
+
+    <!-- ============ 员工编辑 ============ -->
+    <section class="view" data-view="editor">
+      <header class="vhead">
+        <div><h1 id="editorTitle">新建员工</h1><p class="sub">定义角色、目标与能力。</p></div>
+        <div class="vhead-actions">
+          <button id="editorCancel" class="btn ghost">← 取消</button>
+          <button id="editorDelete" class="btn danger hidden">删除</button>
+          <button id="editorSave" class="btn primary">创建员工</button>
+        </div>
+      </header>
+      <div class="editor-grid">
+        <div class="editor-main panel">
+          <label class="fl">角色</label>
+          <input id="f-role" placeholder="例如：市场研究分析师" />
+          <label class="fl">目标</label>
+          <textarea id="f-goal" placeholder="收集并整合有洞察力的信息，为决策提供依据。"></textarea>
+          <label class="fl">背景设定</label>
+          <textarea id="f-backstory" class="tall" placeholder="你是一位资深分析师……"></textarea>
+          <label class="fl">人设 PERSONA <span class="hint">（可选）</span></label>
+          <textarea id="f-persona" placeholder="可选：人设 / 决策风格"></textarea>
+          <label class="fl">工具</label>
+          <div id="f-tools" class="chips"></div>
+        </div>
+        <aside class="editor-side panel">
+          <label class="fl">显示名</label>
+          <input id="f-name" placeholder="员工名字" />
+          <label class="fl">模型</label>
+          <select id="f-model"></select>
+          <label class="fl">推理强度</label>
+          <select id="f-reasoning"><option value="low">低</option><option value="medium" selected>中</option><option value="high">高</option></select>
+          <label class="cap-check"><input type="checkbox" id="f-memory" /> 记忆 <span class="hint">（跨运行保留上下文）</span></label>
+          <label class="fl">MCP 服务</label>
+          <input id="f-mcp" placeholder="用逗号分隔的服务名" />
+          <label class="fl">权限</label>
+          <select id="f-access"><option value="member">成员</option><option value="owner">所有者</option></select>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ============ 运行记录 ============ -->
+    <section class="view" data-view="runs">
+      <header class="vhead"><div><h1>运行记录</h1><p class="sub">所有执行的完整产出。</p></div></header>
+      <div class="runs-layout">
+        <div id="missionsList" class="runs-list"></div>
+        <div id="missionReport" class="run-report">选择左侧一次运行查看完整产出。</div>
+      </div>
+    </section>
+
+    <!-- ============ 用量 ============ -->
+    <section class="view" data-view="usage">
+      <header class="vhead"><div><h1>用量</h1><p class="sub">本地统计。</p></div></header>
+      <div id="usageCards" class="cost-cards"></div>
+    </section>
+
+    <!-- ============ 设置 ============ -->
+    <section class="view" data-view="settings">
+      <header class="vhead"><div><h1>设置</h1><p class="sub">连接与执行策略。</p></div></header>
+      <div class="panel settings">
+        <div class="set-row"><div class="set-label">模型连接</div><strong class="set-value">Cursor SDK</strong></div>
+        <div class="set-row"><div class="set-label">CURSOR_API_KEY</div><strong id="setKey" class="set-value">检测中…</strong></div>
+        <div class="set-row">
+          <div><div class="set-label">免确认模式</div><div class="set-help">开 = agent 直接改代码、新项目自动建、运行不二次确认</div></div>
+          <label class="switch"><input type="checkbox" id="setNoConfirm" /><span class="slider"></span></label>
+        </div>
+        <div class="set-row">
+          <div><div class="set-label">可访问目录</div><div class="set-help">CEO 默认能读这里的所有代码。默认 <code>~</code>（你的整个用户目录，开箱即用，能看任何项目）。想缩小范围就改成某个具体路径，如 <code>~/xhsclaw</code>。新项目统一建在 <code>~/ai-team-projects</code></div></div>
+          <div class="inline"><input id="setWsBase" placeholder="~" style="width:230px" /><button id="setWsBaseSave" class="btn ghost sm">保存</button></div>
+        </div>
+        <div class="set-row"><div class="set-label">编队</div><a id="editCrewLink" class="link">在「员工库」管理员工 →</a></div>
+        <p class="muted">Key 从 <code>ai-team/.env</code> 读取；修改后重启 app 生效。</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ===================== 详情弹层 ===================== -->
+<div id="detail" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span id="dtTitle" class="modal-title"></span>
+      <button id="dtClose" class="icon-btn">✕</button>
+    </div>
+    <div class="modal-tabs">
+      <button class="mtab active" data-tab="doc">执行文档</button>
+      <button class="mtab" data-tab="report">运行报告</button>
+      <button class="mtab" data-tab="timeline">运行过程</button>
+      <button class="mtab" data-tab="artifacts">运行产物</button>
+    </div>
+    <div id="dtDocPane" class="modal-doc-wrap">
+      <textarea id="dtDocEditor" class="doc-editor" spellcheck="false" placeholder="在此编写执行文档（Markdown）…"></textarea>
+    </div>
+    <div id="dtDocFoot" class="modal-foot">
+      <span id="dtDocHint" class="hint">支持 Markdown · ⌘S 保存</span>
+      <button id="dtDocSave" class="btn primary sm" disabled>保存</button>
+    </div>
+    <div id="dtReport" class="modal-body md hidden"></div>
+    <div id="dtTimeline" class="modal-body hidden"></div>
+    <div id="dtArtifacts" class="modal-body hidden"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

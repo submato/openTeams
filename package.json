@@ -1,0 +1,14 @@
+{
+  "name": "ai-team",
+  "version": "0.1.8",
+  "private": true,
+  "type": "module",
+  "description": "CrewAI-inspired multi-agent crew running on the Cursor SDK.",
+  "scripts": {
+    "run": "node src/run.mjs",
+    "idea": "node src/run.mjs --inbox"
+  },
+  "dependencies": {
+    "@cursor/sdk": "^1.0.18"
+  }
+}

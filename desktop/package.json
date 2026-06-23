@@ -1,0 +1,64 @@
+{
+  "name": "ai-team-desktop",
+  "version": "0.1.8",
+  "private": true,
+  "description": "AI Team — Electron desktop app for managing a multi-agent crew on the Cursor SDK.",
+  "main": "main.cjs",
+  "author": "xhsclaw",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.xhsclaw.ai-team",
+    "productName": "AI Team",
+    "copyright": "Copyright © 2026",
+    "directories": {
+      "app": "..",
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "desktop/**/*",
+      "src/**/*",
+      "node_modules/**/*",
+      "!workspaces/**",
+      "!projects/**",
+      "!traces/**",
+      "!agents/**",
+      "!skills/**",
+      "!**/.env",
+      "!ideas.json",
+      "!ceo-*.json",
+      "!crew.json",
+      "!settings.json",
+      "!workspaces.json",
+      "!desktop/dist/**",
+      "!desktop/node_modules/**"
+    ],
+    "asarUnpack": [
+      "node_modules/@cursor/sdk-darwin-*/**"
+    ],
+    "extraMetadata": {
+      "main": "desktop/main.cjs"
+    },
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "AI Team ${version}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^42.4.0",
+    "electron-builder": "^26.0.12"
+  }
+}
