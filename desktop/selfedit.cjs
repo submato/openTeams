@@ -25,9 +25,18 @@ const { execFileSync, spawn } = require("node:child_process");
 
 const GIT_ID = ["-c", "user.name=ai-team-selfedit", "-c", "user.email=selfedit@local"];
 const CODE_EXT = new Set([".mjs", ".cjs", ".js"]);
+// The dependency dirs are symlinked into the worktree (see linkDeps); these
+// magic pathspecs keep those symlinks out of every stage/diff/commit so a
+// candidate never tries to overwrite the live repo's real node_modules.
+const STAGE_SPEC = [".", ":(exclude)node_modules", ":(exclude)desktop/node_modules"];
 
 function git(repo, args, opts = {}) {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...opts }).trim();
+}
+// Raw (untrimmed) — needed for `status --porcelain`, whose first line begins
+// with a significant leading space (e.g. " M path") that .trim() would eat.
+function gitRaw(repo, args, opts = {}) {
+  return execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...opts });
 }
 function head(repo) { return git(repo, ["rev-parse", "HEAD"]); }
 function worktreesRoot() { return path.join(os.tmpdir(), "ai-team-selfedit"); }
@@ -60,13 +69,15 @@ function createCandidate(repo, id) {
 
 /** Files changed in the worktree vs its base (working tree, uncommitted). */
 function changedFiles(dir) {
-  const out = git(dir, ["status", "--porcelain"]);
-  if (!out) return [];
-  return out.split("\n").map((line) => {
+  const out = gitRaw(dir, ["status", "--porcelain"]);
+  return out.split("\n").filter((l) => l.length > 3).map((line) => {
     const status = line.slice(0, 2).trim();
-    const file = line.slice(3).trim();
+    let file = line.slice(3);
+    // Renames render as "old -> new"; keep the new path.
+    const arrow = file.indexOf(" -> ");
+    if (arrow >= 0) file = file.slice(arrow + 4);
     return { status, file };
-  }).filter((c) => c.file);
+  }).filter((c) => c.file && !/(^|\/)node_modules(\/|$)/.test(c.file));
 }
 
 function diff(dir, maxBytes = 200_000) {
@@ -74,9 +85,9 @@ function diff(dir, maxBytes = 200_000) {
   let patch = "";
   try {
     // Stage everything (so newly-created files show up too), then diff the index
-    // against HEAD. node_modules is a symlink we never want in the patch.
-    git(dir, ["add", "-A", "--", ":!node_modules"]);
-    patch = git(dir, ["diff", "--cached", "--", ":!node_modules"]);
+    // against HEAD. The symlinked dependency dirs are excluded.
+    git(dir, ["add", "-A", "--", ...STAGE_SPEC]);
+    patch = git(dir, ["diff", "--cached", "--", ...STAGE_SPEC]);
   } catch { patch = ""; }
   if (patch.length > maxBytes) patch = patch.slice(0, maxBytes) + "\n… (diff truncated) …";
   return { files, patch };
@@ -145,7 +156,7 @@ function runSmoke(dir, opts = {}) {
 
 /** Commit the candidate in its worktree (so it can be merged on apply). */
 function commitCandidate(dir, message) {
-  git(dir, ["add", "-A", "--", ":!node_modules"]);
+  git(dir, ["add", "-A", "--", ...STAGE_SPEC]);
   git(dir, [...GIT_ID, "commit", "-m", message || "self-edit candidate"]);
   return head(dir);
 }
