@@ -1405,9 +1405,20 @@ async function renderRuns() {
 async function openMission(wsId, stamp, item) {
   $$(".run-item").forEach((n) => n.classList.remove("active"));
   if (item) item.classList.add("active");
-  const run = await api.getMission(wsId, stamp);
-  if (!run) return;
-  $("#missionReport").innerHTML = mdToHtml(`# ${run.idea}\n\n` + buildReportMd(run));
+  // Show a loading state and give explicit feedback on failure/missing data,
+  // instead of silently leaving the previously selected run's report on screen.
+  const report = $("#missionReport");
+  report.innerHTML = '<div class="muted">加载中…</div>';
+  let run;
+  try {
+    run = await api.getMission(wsId, stamp);
+  } catch (e) {
+    console.error("读取运行记录失败", e);
+    report.innerHTML = '<div class="muted">读取这次运行失败，请重试。</div>';
+    return;
+  }
+  if (!run) { report.innerHTML = '<div class="muted">这次运行的记录已不存在或无法读取。</div>'; return; }
+  report.innerHTML = mdToHtml(`# ${run.idea}\n\n` + buildReportMd(run));
 }
 
 // ---------------------------------------------------------------- usage
