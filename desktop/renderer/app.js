@@ -161,7 +161,8 @@ let IDEAS = [];
 let WS = [];
 let chatHistory = [];
 let chatLive = null;
-let chatInflight = null;        // { statusLabel, stream, startedAt } — survives tab switches
+let chatInflight = null;        // { statusLabel, status, stream, startedAt } — survives tab switches
+let chatTick = null;            // 1s interval keeping the elapsed-time readout live
 // Restore the last-used mode so a reload/relaunch keeps the user's choice
 // (mirrors the persisted draft + panel prefs); fall back to "auto" if unset
 // or somehow invalid.
@@ -460,7 +461,23 @@ function setSendingUI(on) {
   if (on) { btn.textContent = "■ 停止"; btn.classList.remove("primary"); btn.classList.add("danger"); btn.onclick = cancelChat; }
   else { btn.textContent = "发送"; btn.classList.remove("danger"); btn.classList.add("primary"); btn.onclick = chatSend; }
 }
+// Render the status line as "<base>… <N>s". `base` is the current phase
+// (thinking / planning / investigating / delegating), elapsed time is derived
+// from startedAt so a live ticker can refresh it without any incoming event.
+function renderChatStatus() {
+  if (!chatInflight) return;
+  const node = $("#chatStatus");
+  if (!node) return;
+  const sec = Math.floor((Date.now() - chatInflight.startedAt) / 1000);
+  const base = chatInflight.status || chatInflight.statusLabel || "思考中";
+  node.textContent = `${base}… ${sec}s`;
+}
+// Keep the seconds counter advancing even while the model is silent (e.g. mid
+// tool call) so a working run never looks frozen/hung.
+function startChatTick() { stopChatTick(); chatTick = setInterval(renderChatStatus, 1000); }
+function stopChatTick() { if (chatTick) { clearInterval(chatTick); chatTick = null; } }
 async function cancelChat() {
+  if (chatInflight) chatInflight.status = "停止中";
   $("#chatStatus").textContent = "停止中…";
   await api.ceoCancel();   // backend cancels the run; ceoSend then resolves with partial
 }
@@ -478,15 +495,17 @@ async function chatSend() {
   const bubble = addMsg("assistant typing", thinking);
   bubble._stream = "";
   chatLive = bubble;
-  chatInflight = { statusLabel, stream: "", startedAt: Date.now() };
+  chatInflight = { statusLabel, status: statusLabel, stream: "", startedAt: Date.now() };
   setSendingUI(true);
-  $("#chatStatus").textContent = statusLabel + "…";
+  startChatTick();
+  renderChatStatus();
   let res;
   try {
     res = await api.ceoSend(sendHistory, msg, chatMode);
   } catch (err) {
     res = { ok: false, error: err.message || String(err) };
   } finally {
+    stopChatTick();
     chatInflight = null;
     chatLive = null;
     setSendingUI(false);
@@ -535,20 +554,18 @@ function handleCeoEvent(ev) {
     const stick = chatNearBottom();
     if (ev.kind === "planning") chatLive.textContent = "Elon 正在拟执行文档…";
     else if (ev.kind === "doc" && ev.idea) docBubble(chatLive, ev.idea);
-    else if (ev.kind === "delegate") $("#chatStatus").textContent = "团队执行中…";
+    else if (ev.kind === "delegate") { if (chatInflight) chatInflight.status = "团队执行中"; }
     else if (ev.kind === "tool") {
-      $("#chatStatus").textContent = "调查中…";
+      if (chatInflight) chatInflight.status = "调查中";
       if (!chatLive._stream) chatLive.textContent = "🔍 " + (ev.name || "查看资料") + (ev.status ? " · " + ev.status : "");
     } else if (ev.kind === "text" && ev.text) {
+      if (chatInflight) chatInflight.status = chatInflight.statusLabel;
       chatLive.classList.remove("typing");
       chatLive._stream = ev.text;
       if (chatInflight) chatInflight.stream = ev.text;
       chatLive.textContent = ev.text;
     }
-    if (chatInflight) {
-      const sec = Math.floor((Date.now() - chatInflight.startedAt) / 1000);
-      $("#chatStatus").textContent = (chatInflight.statusLabel || "思考中") + `… ${sec}s`;
-    }
+    renderChatStatus();
     if (stick) $("#chatLog").scrollTop = $("#chatLog").scrollHeight;
     updateChatJump();
   }
