@@ -381,8 +381,10 @@ function sessionItem(x, activeId) {
   it.querySelector(".si-del").onclick = async (e) => {
     e.stopPropagation();
     if (!confirm("删除这个对话？")) return;
-    await api.ceoSessionDelete(x.id);
-    await renderChat();
+    // A flaky IPC must surface as a toast, not a silent unhandled rejection that
+    // leaves the just-clicked item looking like it did nothing.
+    try { await api.ceoSessionDelete(x.id); await renderChat(); }
+    catch (err) { console.error("删除对话失败", err); toast("删除对话失败，请稍后重试。", "error"); }
   };
   return it;
 }
@@ -392,8 +394,8 @@ async function switchSession(id) {
   // live ticker and would swallow this hint within ~1s, so the user would never
   // learn why their click was ignored.
   if (chatInflight) { toast("等 Elon 回完这条再切换对话", "warn"); return; }
-  await api.ceoSessionSet(id);
-  await renderChat();
+  try { await api.ceoSessionSet(id); await renderChat(); }
+  catch (err) { console.error("切换对话失败", err); toast("切换对话失败，请稍后重试。", "error"); }
 }
 async function renderSessions() {
   const s = await api.ceoSessions();
