@@ -117,7 +117,15 @@ function mdToHtml(src) {
     const h = t.match(/^(#{1,4})\s+(.*)$/);
     if (h) { closeList(); const lv = Math.min(3, h[1].length); html += `<h${lv}>${inline(h[2])}</h${lv}>`; continue; }
     const ul = line.match(/^\s*[-*]\s+(.*)$/);
-    if (ul) { if (list !== "ul") { closeList(); html += "<ul>"; list = "ul"; } html += `<li>${inline(ul[1])}</li>`; continue; }
+    if (ul) {
+      if (list !== "ul") { closeList(); html += "<ul>"; list = "ul"; }
+      // GitHub-style task list: "- [ ] todo" / "- [x] done" → a real (disabled)
+      // checkbox instead of literal "[ ]" text. LLM plans/reports emit these a lot.
+      const task = ul[1].match(/^\[([ xX])\]\s+(.*)$/);
+      if (task) html += `<li class="md-task"><input type="checkbox" disabled${task[1].toLowerCase() === "x" ? " checked" : ""}/><span>${inline(task[2])}</span></li>`;
+      else html += `<li>${inline(ul[1])}</li>`;
+      continue;
+    }
     const ol = line.match(/^\s*(\d+)\.\s+(.*)$/);
     if (ol) {
       // Preserve the first item's number so a list that resumes after some text

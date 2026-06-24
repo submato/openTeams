@@ -402,6 +402,8 @@ textarea.tall { min-height: 120px; }
 .md p { margin: 0 0 10px; }
 .md ul, .md ol { margin: 6px 0 12px; padding-left: 22px; }
 .md li { margin: 4px 0; }
+.md li.md-task { list-style: none; margin-left: -18px; display: flex; align-items: flex-start; gap: 7px; }
+.md li.md-task input { margin: 3px 0 0; flex: none; }
 .md strong { font-weight: 700; }
 .md a { color: var(--accent); }
 .md code { background: var(--surface-3); padding: 1.5px 6px; border-radius: 5px; font-family: var(--mono); font-size: 12px; }
