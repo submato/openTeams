@@ -1123,7 +1123,10 @@ function bindSchedule() {
     const btn = $("#autoRunNow"); btn.disabled = true; btn.textContent = "派活中…";
     const r = await api.runScheduleNow();
     btn.disabled = false; btn.textContent = "▶ 立即跑一次";
-    if (r && !r.ok && r.error) alert(r.error);
+    // Use the app's toast instead of a blocking alert() (consistent with every
+    // other error path here, and doesn't freeze the UI thread).
+    if (r && !r.ok && r.error) toast(r.error, "error", 7000);
+    else if (r && r.ok) toast("已派活，去看板查看进度。", "info");
     SCHEDULE = await api.getSchedule(); renderSchedule(); refreshIdeas();
   };
 }
