@@ -755,6 +755,15 @@ function updateDocSaveHint() {
 }
 async function closeDetail() {
   if (detailDocDirty && !confirm("执行文档有未保存的修改，确定关闭？")) return;
+  // A card chat still running would otherwise keep the send button disabled and
+  // block every future card — cancel it and reset the chat UI state on close.
+  if (cardChatInflight) {
+    try { await api.cardCancel(); } catch {}
+    cardChatInflight = false;
+    cardChatLive = null;
+    $("#dtChatSend").disabled = false;
+    $("#dtChatStatus").textContent = "";
+  }
   $("#detail").classList.add("hidden");
   detailIdeaId = null;
   detailIdea = null;
@@ -840,8 +849,10 @@ async function cardChatSend() {
       $("#dtTitle").textContent = res.idea.text || "";
       if (!detailDocDirty) { $("#dtDocEditor").value = res.idea.doc || ""; updateDocSaveHint(); }
     }
-    await refreshIdeas();
   }
+  // Always sync the board so the persisted chat history is in IDEAS and survives
+  // closing/reopening the card (not just when the card itself was edited).
+  await refreshIdeas();
 }
 function switchTab(tab) {
   $$(".mtab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
@@ -862,9 +873,12 @@ async function saveDetailDoc() {
   await refreshIdeas();
 }
 async function openDetail(it, tab) {
+  it = IDEAS.find((x) => x.id === it.id) || it;   // freshest copy (incl. card chat history)
   detailIdeaId = it.id;
   detailIdea = it;
   detailDocDirty = false;
+  $("#dtChatSend").disabled = false;              // clear any stale in-flight disable
+  $("#dtChatStatus").textContent = "";
   $("#dtTitle").textContent = it.text;
   $("#dtDocEditor").value = it.doc || "";
   updateDocSaveHint();
