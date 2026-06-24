@@ -18,9 +18,14 @@ function toast(msg, kind = "info", ms = 5000) {
   const t = el("div", "toast " + kind, esc(msg));
   host.appendChild(t);
   requestAnimationFrame(() => t.classList.add("show"));
+  const dismiss = () => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); };
+  // Let the user clear a toast immediately instead of waiting out the timer —
+  // useful when several stack up, or to dismiss a sticky (ms<=0) error toast.
+  // addEventListener (not onclick) so callers can still attach their own action.
+  t.addEventListener("click", dismiss);
   // ms <= 0 means "sticky": keep it until something dismisses it (used for
   // critical errors that need a deliberate user action rather than a timeout).
-  if (ms > 0) setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
+  if (ms > 0) setTimeout(dismiss, ms);
   return t;
 }
 

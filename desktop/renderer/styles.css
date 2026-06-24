@@ -198,7 +198,7 @@ code { background: var(--surface-3); padding: 2px 7px; border-radius: 5px; font-
 
 /* transient toasts (top-right) */
 .toasts { position: fixed; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 9999; pointer-events: none; }
-.toast { pointer-events: auto; max-width: 340px; padding: 11px 14px; border-radius: var(--r-sm); font-size: 12.5px; line-height: 1.5; color: var(--text); background: var(--card); border: 1px solid var(--line-2); box-shadow: var(--shadow); opacity: 0; transform: translateY(-8px); transition: opacity .25s, transform .25s; }
+.toast { pointer-events: auto; cursor: pointer; max-width: 340px; padding: 11px 14px; border-radius: var(--r-sm); font-size: 12.5px; line-height: 1.5; color: var(--text); background: var(--card); border: 1px solid var(--line-2); box-shadow: var(--shadow); opacity: 0; transform: translateY(-8px); transition: opacity .25s, transform .25s; }
 .toast.show { opacity: 1; transform: translateY(0); }
 .toast.warn { border-left: 3px solid var(--interrupted); }
 .toast.error { border-left: 3px solid var(--failed); }
