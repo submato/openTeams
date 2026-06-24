@@ -14,13 +14,25 @@ const REASON_CN = { app_quit: "退出应用", app_crash: "应用异常退出" };
 // Lightweight transient toast (no dependency; auto-dismisses).
 function toast(msg, kind = "info", ms = 5000) {
   let host = document.querySelector("#toasts");
-  if (!host) { host = el("div", "toasts"); host.id = "toasts"; document.body.appendChild(host); }
+  if (!host) {
+    host = el("div", "toasts"); host.id = "toasts";
+    // Announce toasts to assistive tech (errors/successes are otherwise silent).
+    host.setAttribute("aria-live", "polite");
+    document.body.appendChild(host);
+  }
   const t = el("div", "toast " + kind, esc(msg));
+  // Errors deserve an assertive announcement so they aren't missed.
+  t.setAttribute("role", kind === "error" ? "alert" : "status");
   host.appendChild(t);
   requestAnimationFrame(() => t.classList.add("show"));
+  const dismiss = () => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); };
+  // Let the user clear a toast immediately instead of waiting out the timer —
+  // useful when several stack up, or to dismiss a sticky (ms<=0) error toast.
+  // addEventListener (not onclick) so callers can still attach their own action.
+  t.addEventListener("click", dismiss);
   // ms <= 0 means "sticky": keep it until something dismisses it (used for
   // critical errors that need a deliberate user action rather than a timeout).
-  if (ms > 0) setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, ms);
+  if (ms > 0) setTimeout(dismiss, ms);
   return t;
 }
 
@@ -93,6 +105,9 @@ function mdToHtml(src) {
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+    // GitHub-style strikethrough: ~~text~~ → <del>. LLM reports use it to mark
+    // dropped/superseded items; otherwise it renders as literal tildes.
+    .replace(/~~([^~\n]+)~~/g, "<del>$1</del>")
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank">$1</a>'));
   const lines = text.split("\n");
   const codeRe = new RegExp("^" + Z + "\\d+" + Z + "$");
@@ -153,7 +168,8 @@ let IDEAS = [];
 let WS = [];
 let chatHistory = [];
 let chatLive = null;
-let chatInflight = null;        // { statusLabel, stream, startedAt } — survives tab switches
+let chatInflight = null;        // { statusLabel, status, stream, startedAt } — survives tab switches
+let chatTick = null;            // 1s interval keeping the elapsed-time readout live
 // Restore the last-used mode so a reload/relaunch keeps the user's choice
 // (mirrors the persisted draft + panel prefs); fall back to "auto" if unset
 // or somehow invalid.
@@ -228,14 +244,23 @@ function show(view) {
   if (RESTORABLE_VIEWS.includes(view)) { try { localStorage.setItem("activeView", view); } catch {} }
   $$(".view").forEach((v) => v.classList.toggle("active", v.dataset.view === view));
   $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.view === view));
-  if (view === "chat") { renderChat(); focusComposer(); }
-  if (view === "board") renderBoard();
-  if (view === "schedule") renderSchedule();
-  if (view === "agents") renderAgents();
-  if (view === "skills") renderSkills();
-  if (view === "runs") renderRuns();
-  if (view === "objectives") renderObjectives();
-  if (view === "usage") renderUsage();
+  if (view === "chat") { safeRender(renderChat, "对话"); focusComposer(); }
+  if (view === "board") safeRender(renderBoard, "看板");
+  if (view === "schedule") safeRender(renderSchedule, "定时");
+  if (view === "agents") safeRender(renderAgents, "员工");
+  if (view === "skills") safeRender(renderSkills, "技能");
+  if (view === "runs") safeRender(renderRuns, "运行记录");
+  if (view === "objectives") safeRender(renderObjectives, "目标循环");
+  if (view === "usage") safeRender(renderUsage, "用量");
+}
+// Run a (possibly async) view renderer without letting a single failed IPC/render
+// blank the view or surface as an unhandled rejection: log it and tell the user
+// the view failed to load (each view re-fetches on next open, so this recovers).
+function safeRender(fn, label) {
+  Promise.resolve().then(fn).catch((e) => {
+    console.error(`${label}视图渲染失败`, e);
+    toast(`${label}加载失败，请稍后重试。`, "error", 6000);
+  });
 }
 
 async function refreshIdeas() {
@@ -359,7 +384,10 @@ function sessionItem(x, activeId) {
 }
 async function switchSession(id) {
   if (id === activeSessionId) return;
-  if (chatInflight) { $("#chatStatus").textContent = "等 Elon 回完再切换对话"; return; }
+  // Use a toast, not #chatStatus: that line is refreshed every second by the
+  // live ticker and would swallow this hint within ~1s, so the user would never
+  // learn why their click was ignored.
+  if (chatInflight) { toast("等 Elon 回完这条再切换对话", "warn"); return; }
   await api.ceoSessionSet(id);
   await renderChat();
 }
@@ -410,11 +438,12 @@ function addMsg(role, text) {
   log.appendChild(m); log.scrollTop = log.scrollHeight;
   return m;
 }
-// True when the chat log is scrolled to (or near) the bottom. Used so live
+// True when a chat log is scrolled to (or near) the bottom. Used so live
 // streaming only auto-scrolls when the user is already following along — if they
 // scrolled up to re-read something, incoming tokens won't yank them back down.
-function chatNearBottom() {
-  const log = $("#chatLog");
+// Defaults to the main chat log; pass another element to reuse for card chat.
+function chatNearBottom(log) {
+  log = log || $("#chatLog");
   if (!log) return true;
   return log.scrollHeight - log.scrollTop - log.clientHeight < 80;
 }
@@ -452,7 +481,23 @@ function setSendingUI(on) {
   if (on) { btn.textContent = "■ 停止"; btn.classList.remove("primary"); btn.classList.add("danger"); btn.onclick = cancelChat; }
   else { btn.textContent = "发送"; btn.classList.remove("danger"); btn.classList.add("primary"); btn.onclick = chatSend; }
 }
+// Render the status line as "<base>… <N>s". `base` is the current phase
+// (thinking / planning / investigating / delegating), elapsed time is derived
+// from startedAt so a live ticker can refresh it without any incoming event.
+function renderChatStatus() {
+  if (!chatInflight) return;
+  const node = $("#chatStatus");
+  if (!node) return;
+  const sec = Math.floor((Date.now() - chatInflight.startedAt) / 1000);
+  const base = chatInflight.status || chatInflight.statusLabel || "思考中";
+  node.textContent = `${base}… ${sec}s`;
+}
+// Keep the seconds counter advancing even while the model is silent (e.g. mid
+// tool call) so a working run never looks frozen/hung.
+function startChatTick() { stopChatTick(); chatTick = setInterval(renderChatStatus, 1000); }
+function stopChatTick() { if (chatTick) { clearInterval(chatTick); chatTick = null; } }
 async function cancelChat() {
+  if (chatInflight) chatInflight.status = "停止中";
   $("#chatStatus").textContent = "停止中…";
   await api.ceoCancel();   // backend cancels the run; ceoSend then resolves with partial
 }
@@ -470,15 +515,17 @@ async function chatSend() {
   const bubble = addMsg("assistant typing", thinking);
   bubble._stream = "";
   chatLive = bubble;
-  chatInflight = { statusLabel, stream: "", startedAt: Date.now() };
+  chatInflight = { statusLabel, status: statusLabel, stream: "", startedAt: Date.now() };
   setSendingUI(true);
-  $("#chatStatus").textContent = statusLabel + "…";
+  startChatTick();
+  renderChatStatus();
   let res;
   try {
     res = await api.ceoSend(sendHistory, msg, chatMode);
   } catch (err) {
     res = { ok: false, error: err.message || String(err) };
   } finally {
+    stopChatTick();
     chatInflight = null;
     chatLive = null;
     setSendingUI(false);
@@ -527,20 +574,18 @@ function handleCeoEvent(ev) {
     const stick = chatNearBottom();
     if (ev.kind === "planning") chatLive.textContent = "Elon 正在拟执行文档…";
     else if (ev.kind === "doc" && ev.idea) docBubble(chatLive, ev.idea);
-    else if (ev.kind === "delegate") $("#chatStatus").textContent = "团队执行中…";
+    else if (ev.kind === "delegate") { if (chatInflight) chatInflight.status = "团队执行中"; }
     else if (ev.kind === "tool") {
-      $("#chatStatus").textContent = "调查中…";
+      if (chatInflight) chatInflight.status = "调查中";
       if (!chatLive._stream) chatLive.textContent = "🔍 " + (ev.name || "查看资料") + (ev.status ? " · " + ev.status : "");
     } else if (ev.kind === "text" && ev.text) {
+      if (chatInflight) chatInflight.status = chatInflight.statusLabel;
       chatLive.classList.remove("typing");
       chatLive._stream = ev.text;
       if (chatInflight) chatInflight.stream = ev.text;
       chatLive.textContent = ev.text;
     }
-    if (chatInflight) {
-      const sec = Math.floor((Date.now() - chatInflight.startedAt) / 1000);
-      $("#chatStatus").textContent = (chatInflight.statusLabel || "思考中") + `… ${sec}s`;
-    }
+    renderChatStatus();
     if (stick) $("#chatLog").scrollTop = $("#chatLog").scrollHeight;
     updateChatJump();
   }
@@ -799,10 +844,15 @@ function handleCardEvent(ev) {
   if (ev.kind === "tool") {
     $("#dtChatStatus").textContent = "调查中…" + (ev.name ? "（" + ev.name + "）" : "");
   } else if (ev.kind === "text" && ev.text) {
+    // Capture intent BEFORE mutating the bubble: only follow the stream if the
+    // user is already at the bottom, so reading scrolled-up text isn't disrupted
+    // (mirrors the main chat's scroll-aware streaming).
+    const log = $("#dtChatLog");
+    const stick = chatNearBottom(log);
     b.classList.remove("typing");
     b._stream = ev.text;
     b.innerHTML = mdToHtml(stripCardMarkers(ev.text));
-    $("#dtChatLog").scrollTop = $("#dtChatLog").scrollHeight;
+    if (stick && log) log.scrollTop = log.scrollHeight;
   }
 }
 async function cardChatSend() {
@@ -833,7 +883,11 @@ async function cardChatSend() {
   if (!res || !res.ok) {
     const partial = (res && res.text && res.text.trim()) ? res.text.trim() : stripCardMarkers(bubble._stream || "");
     bubble.innerHTML = mdToHtml(partial || "（没有内容）");
-    appendCardMsg("system", "出错：" + ((res && res.error) || "未知错误"));
+    // Unlike the main chat, card chat isn't persisted on failure, so the typed
+    // message would be lost. Restore it to the (empty) composer so the user can
+    // resend without retyping — never drop written content.
+    if (!input.value.trim()) { input.value = msg; }
+    appendCardMsg("system", "出错：" + ((res && res.error) || "未知错误") + "（你的消息已放回输入框，可重发）");
     return;
   }
   bubble.innerHTML = mdToHtml(res.text || "（无回复）");
@@ -1083,7 +1137,10 @@ function bindSchedule() {
     const btn = $("#autoRunNow"); btn.disabled = true; btn.textContent = "派活中…";
     const r = await api.runScheduleNow();
     btn.disabled = false; btn.textContent = "▶ 立即跑一次";
-    if (r && !r.ok && r.error) alert(r.error);
+    // Use the app's toast instead of a blocking alert() (consistent with every
+    // other error path here, and doesn't freeze the UI thread).
+    if (r && !r.ok && r.error) toast(r.error, "error", 7000);
+    else if (r && r.ok) toast("已派活，去看板查看进度。", "info");
     SCHEDULE = await api.getSchedule(); renderSchedule(); refreshIdeas();
   };
 }
@@ -1145,10 +1202,10 @@ function renderAutoStatus() {
 }
 function tickAutoStatus() {
   if (isView("schedule") && SCHEDULE.enabled) renderAutoStatus();
-  if (chatInflight) {
-    const sec = Math.floor((Date.now() - chatInflight.startedAt) / 1000);
-    $("#chatStatus").textContent = (chatInflight.statusLabel || "思考中") + `… ${sec}s`;
-  }
+  // NOTE: the chat status line is owned solely by renderChatStatus() (driven by
+  // chatTick while a turn is in flight). It must NOT be written here too — doing
+  // so used to clobber the richer live phase (调查中 / 团队执行中 / 停止中) back
+  // to the generic statusLabel about once a second, causing flicker.
 }
 function renderAutoLog() {
   const wrap = $("#autoLog"); if (!wrap) return;
@@ -1362,9 +1419,20 @@ async function renderRuns() {
 async function openMission(wsId, stamp, item) {
   $$(".run-item").forEach((n) => n.classList.remove("active"));
   if (item) item.classList.add("active");
-  const run = await api.getMission(wsId, stamp);
-  if (!run) return;
-  $("#missionReport").innerHTML = mdToHtml(`# ${run.idea}\n\n` + buildReportMd(run));
+  // Show a loading state and give explicit feedback on failure/missing data,
+  // instead of silently leaving the previously selected run's report on screen.
+  const report = $("#missionReport");
+  report.innerHTML = '<div class="muted">加载中…</div>';
+  let run;
+  try {
+    run = await api.getMission(wsId, stamp);
+  } catch (e) {
+    console.error("读取运行记录失败", e);
+    report.innerHTML = '<div class="muted">读取这次运行失败，请重试。</div>';
+    return;
+  }
+  if (!run) { report.innerHTML = '<div class="muted">这次运行的记录已不存在或无法读取。</div>'; return; }
+  report.innerHTML = mdToHtml(`# ${run.idea}\n\n` + buildReportMd(run));
 }
 
 // ---------------------------------------------------------------- usage
