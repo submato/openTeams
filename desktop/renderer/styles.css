@@ -424,6 +424,7 @@ textarea.tall { min-height: 120px; }
 .md li.md-task { list-style: none; margin-left: -18px; display: flex; align-items: flex-start; gap: 7px; }
 .md li.md-task input { margin: 3px 0 0; flex: none; }
 .md strong { font-weight: 700; }
+.md del { color: var(--muted); text-decoration-thickness: 1px; }
 .md a { color: var(--accent); }
 .md code { background: var(--surface-3); padding: 1.5px 6px; border-radius: 5px; font-family: var(--mono); font-size: 12px; }
 .md pre.md-code { background: #0f1117; color: #e6e7ee; border-radius: var(--r-sm); padding: 13px 15px; margin: 10px 0; overflow-x: auto; }

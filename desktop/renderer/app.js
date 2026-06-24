@@ -93,6 +93,9 @@ function mdToHtml(src) {
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+    // GitHub-style strikethrough: ~~text~~ → <del>. LLM reports use it to mark
+    // dropped/superseded items; otherwise it renders as literal tildes.
+    .replace(/~~([^~\n]+)~~/g, "<del>$1</del>")
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank">$1</a>'));
   const lines = text.split("\n");
   const codeRe = new RegExp("^" + Z + "\\d+" + Z + "$");
