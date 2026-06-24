@@ -92,13 +92,17 @@ function mdToHtml(src) {
   // <code> span: split on those (capturing-group keeps them at odd indices) and
   // only linkify the plain-text segments. Trailing punctuation is peeled so
   // "(see http://x)" / "http://x." link cleanly.
+  // esc() only neutralizes & < >, so a URL may still carry a literal " (or ')
+  // that would break out of the double-quoted href and inject an attribute
+  // (e.g. onmouseover=). Percent-encode those before they reach the attribute.
+  const hrefAttr = (u) => u.replace(/"/g, "%22").replace(/'/g, "%27");
   const linkifyBare = (s) => s
     .split(/(<a\b[^>]*>.*?<\/a>|<code>.*?<\/code>)/g)
     .map((seg, i) => (i % 2 ? seg : seg.replace(/https?:\/\/[^\s<]+/g, (m) => {
       let url = m, tail = "";
       const tm = url.match(/[.,;:!?)\]'"]+$/);
       if (tm) { tail = tm[0]; url = url.slice(0, -tail.length); }
-      return `<a href="${url}" target="_blank">${url}</a>` + tail;
+      return `<a href="${hrefAttr(url)}" target="_blank" rel="noopener noreferrer">${url}</a>` + tail;
     })))
     .join("");
   const inline = (s) => linkifyBare(s
@@ -108,7 +112,7 @@ function mdToHtml(src) {
     // GitHub-style strikethrough: ~~text~~ → <del>. LLM reports use it to mark
     // dropped/superseded items; otherwise it renders as literal tildes.
     .replace(/~~([^~\n]+)~~/g, "<del>$1</del>")
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank">$1</a>'));
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, txt, u) => `<a href="${hrefAttr(u)}" target="_blank" rel="noopener noreferrer">${txt}</a>`));
   const lines = text.split("\n");
   const codeRe = new RegExp("^" + Z + "\\d+" + Z + "$");
   let html = "", list = null;
