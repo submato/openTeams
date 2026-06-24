@@ -648,6 +648,16 @@ async function stopIdea(it) {
   await refreshIdeas();
 }
 async function delIdea(id) {
+  // Deleting a card is irreversible and (for done/failed cards) also throws away
+  // its run report and extracted artifacts — yet it was the one destructive
+  // delete with no guard, unlike sessions/agents/objectives. Confirm first, and
+  // make the prompt aware of what's actually at stake.
+  const it = IDEAS.find((x) => x.id === id);
+  const title = (it && (it.text || "").trim()) || "这张卡片";
+  const losesRun = it && (it.status === "done" || it.status === "failed");
+  const msg = `删除卡片「${title.slice(0, 50)}」？`
+    + (losesRun ? "\n它的运行报告和产物也会一并删除，无法恢复。" : "");
+  if (!confirm(msg)) return;
   await api.ideaRemove(id);
   await refreshIdeas();
 }
