@@ -1163,10 +1163,10 @@ function renderAutoStatus() {
 }
 function tickAutoStatus() {
   if (isView("schedule") && SCHEDULE.enabled) renderAutoStatus();
-  if (chatInflight) {
-    const sec = Math.floor((Date.now() - chatInflight.startedAt) / 1000);
-    $("#chatStatus").textContent = (chatInflight.statusLabel || "思考中") + `… ${sec}s`;
-  }
+  // NOTE: the chat status line is owned solely by renderChatStatus() (driven by
+  // chatTick while a turn is in flight). It must NOT be written here too — doing
+  // so used to clobber the richer live phase (调查中 / 团队执行中 / 停止中) back
+  // to the generic statusLabel about once a second, causing flicker.
 }
 function renderAutoLog() {
   const wrap = $("#autoLog"); if (!wrap) return;
