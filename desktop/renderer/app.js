@@ -289,7 +289,12 @@ function bindChat() {
   // Persist the unsent draft so a reload/crash/navigation never loses what was typed.
   ta.addEventListener("input", () => { autoGrow(); saveChatDraft(); });
   restoreChatDraft();
-  $("#newSession").onclick = async () => { await api.ceoSessionCreate(); await renderChat(); focusComposer(); };
+  $("#newSession").onclick = async () => {
+    // Mirror switchSession/delete: a flaky IPC must surface as a toast, not a
+    // silent unhandled rejection that makes the "新对话" button look dead.
+    try { await api.ceoSessionCreate(); await renderChat(); focusComposer(); }
+    catch (err) { console.error("新建对话失败", err); toast("新建对话失败，请稍后重试。", "error"); }
+  };
   $("#chatPanelToggle").onclick = () => {
     const c = localStorage.getItem("chatPanelCollapsed") === "1";
     localStorage.setItem("chatPanelCollapsed", c ? "0" : "1");
