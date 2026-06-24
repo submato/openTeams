@@ -415,6 +415,7 @@ textarea.tall { min-height: 120px; }
 .md-copy:hover { background: rgba(255,255,255,.16); }
 .md-copy.done { color: #7ee0a8; border-color: rgba(126,224,168,.4); opacity: 1; }
 .md blockquote { border-left: 3px solid var(--line-2); margin: 8px 0; padding: 2px 0 2px 13px; color: var(--muted); }
+.md hr { border: 0; border-top: 1px solid var(--line-2); margin: 16px 0; }
 .md table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; }
 .md th, .md td { border: 1px solid var(--line-2); padding: 7px 11px; text-align: left; vertical-align: top; }
 .md th { background: var(--surface-2); font-weight: 700; }

@@ -101,6 +101,9 @@ function mdToHtml(src) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i], t = line.trim();
     if (codeRe.test(t)) { closeList(); html += t; continue; }
+    // Thematic break: a line of 3+ dashes/asterisks/underscores → <hr/>. LLMs use
+    // "---" as a section divider constantly; otherwise it renders as literal text.
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) { closeList(); html += "<hr/>"; continue; }
     // table: header row + separator row
     if (/^\|.*\|$/.test(t) && i + 1 < lines.length && /^\|?[\s:|-]+\|?$/.test(lines[i + 1].trim()) && lines[i + 1].includes("-")) {
       closeList();
