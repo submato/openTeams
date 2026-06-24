@@ -433,8 +433,12 @@ function chatWelcome() {
 }
 function addMsg(role, text) {
   const log = $("#chatLog");
-  const m = el("div", "msg " + role);
-  if (role.indexOf("assistant") !== -1) m.innerHTML = mdToHtml(text); else m.textContent = text;
+  const isAssistant = role.indexOf("assistant") !== -1;
+  // Assistant bubbles render markdown, so they need the `.md` class for the
+  // scoped code-block / table / task-list styles to apply. Without it, fenced
+  // code blocks fall back to the generic inline-`code` look (gray per-line boxes).
+  const m = el("div", "msg " + role + (isAssistant ? " md" : ""));
+  if (isAssistant) m.innerHTML = mdToHtml(text); else m.textContent = text;
   log.appendChild(m); log.scrollTop = log.scrollHeight;
   return m;
 }
@@ -821,8 +825,9 @@ function stripCardMarkers(t) {
 }
 function appendCardMsg(role, text) {
   const log = $("#dtChatLog");
-  const b = el("div", "cc-msg " + role);
-  b.innerHTML = role.includes("assistant") ? mdToHtml(text || "") : esc(text || "");
+  const isAssistant = role.includes("assistant");
+  const b = el("div", "cc-msg " + role + (isAssistant ? " md" : ""));
+  b.innerHTML = isAssistant ? mdToHtml(text || "") : esc(text || "");
   log.appendChild(b);
   log.scrollTop = log.scrollHeight;
   return b;
