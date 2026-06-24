@@ -523,7 +523,10 @@ async function chatSend() {
   const sendHistory = chatHistory.slice();
   addMsg("user", msg);
   chatHistory.push({ role: "user", text: msg });
-  await api.ceoSaveHistory(chatHistory);
+  // Persisting the just-typed message is best-effort: a transient IPC hiccup here
+  // must NOT abort the whole turn (which would leave the message shown but never
+  // answered, with no feedback). Log and proceed — the post-turn save re-persists.
+  try { await api.ceoSaveHistory(chatHistory); } catch (e) { console.error("保存对话历史失败（不影响本次回复）", e); }
 
   const statusLabel = chatMode === "task" ? "拟计划中" : "思考中";
   const thinking = chatMode === "task" ? "Elon 正在拟执行文档…" : "Elon 正在思考…";
