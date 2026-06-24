@@ -375,7 +375,10 @@ function sessionItem(x, activeId) {
 }
 async function switchSession(id) {
   if (id === activeSessionId) return;
-  if (chatInflight) { $("#chatStatus").textContent = "等 Elon 回完再切换对话"; return; }
+  // Use a toast, not #chatStatus: that line is refreshed every second by the
+  // live ticker and would swallow this hint within ~1s, so the user would never
+  // learn why their click was ignored.
+  if (chatInflight) { toast("等 Elon 回完这条再切换对话", "warn"); return; }
   await api.ceoSessionSet(id);
   await renderChat();
 }
