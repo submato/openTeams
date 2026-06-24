@@ -865,7 +865,11 @@ async function cardChatSend() {
   if (!res || !res.ok) {
     const partial = (res && res.text && res.text.trim()) ? res.text.trim() : stripCardMarkers(bubble._stream || "");
     bubble.innerHTML = mdToHtml(partial || "（没有内容）");
-    appendCardMsg("system", "出错：" + ((res && res.error) || "未知错误"));
+    // Unlike the main chat, card chat isn't persisted on failure, so the typed
+    // message would be lost. Restore it to the (empty) composer so the user can
+    // resend without retyping — never drop written content.
+    if (!input.value.trim()) { input.value = msg; }
+    appendCardMsg("system", "出错：" + ((res && res.error) || "未知错误") + "（你的消息已放回输入框，可重发）");
     return;
   }
   bubble.innerHTML = mdToHtml(res.text || "（无回复）");
