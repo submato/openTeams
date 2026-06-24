@@ -1349,8 +1349,18 @@ let skillCat = "all";
 function bindSkills() {
   $("#skillsSync").onclick = async () => {
     const btn = $("#skillsSync"); btn.disabled = true; const t = btn.textContent; btn.textContent = "同步中…";
-    const r = await api.skillsSync();
-    btn.disabled = false; btn.textContent = t;
+    let r;
+    try {
+      r = await api.skillsSync();
+    } catch (err) {
+      // A transient IPC failure must not leave the button stuck on "同步中…"
+      // (disabled) forever — surface it and let the user retry.
+      console.error("skillsSync failed", err);
+      toast("同步技能失败，请稍后重试。", "error", 7000);
+      return;
+    } finally {
+      btn.disabled = false; btn.textContent = t;
+    }
     toast(`已同步 ${r && r.count != null ? r.count : 0} 个技能`, "info");
     await renderSkills();
   };
