@@ -14,8 +14,15 @@ const REASON_CN = { app_quit: "退出应用", app_crash: "应用异常退出" };
 // Lightweight transient toast (no dependency; auto-dismisses).
 function toast(msg, kind = "info", ms = 5000) {
   let host = document.querySelector("#toasts");
-  if (!host) { host = el("div", "toasts"); host.id = "toasts"; document.body.appendChild(host); }
+  if (!host) {
+    host = el("div", "toasts"); host.id = "toasts";
+    // Announce toasts to assistive tech (errors/successes are otherwise silent).
+    host.setAttribute("aria-live", "polite");
+    document.body.appendChild(host);
+  }
   const t = el("div", "toast " + kind, esc(msg));
+  // Errors deserve an assertive announcement so they aren't missed.
+  t.setAttribute("role", kind === "error" ? "alert" : "status");
   host.appendChild(t);
   requestAnimationFrame(() => t.classList.add("show"));
   const dismiss = () => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); };
