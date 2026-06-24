@@ -1154,8 +1154,18 @@ function bindSchedule() {
   $("#autoCard").onchange = saveAuto;
   $("#autoRunNow").onclick = async () => {
     const btn = $("#autoRunNow"); btn.disabled = true; btn.textContent = "派活中…";
-    const r = await api.runScheduleNow();
-    btn.disabled = false; btn.textContent = "▶ 立即跑一次";
+    let r;
+    try {
+      r = await api.runScheduleNow();
+    } catch (err) {
+      // A transient IPC failure must not leave the button stuck on "派活中…"
+      // (disabled) forever — surface it and let the user retry.
+      console.error("runScheduleNow failed", err);
+      toast("派活失败，请稍后重试。", "error", 7000);
+      return;
+    } finally {
+      btn.disabled = false; btn.textContent = "▶ 立即跑一次";
+    }
     // Use the app's toast instead of a blocking alert() (consistent with every
     // other error path here, and doesn't freeze the UI thread).
     if (r && !r.ok && r.error) toast(r.error, "error", 7000);
