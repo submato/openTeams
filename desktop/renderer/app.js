@@ -429,11 +429,12 @@ function addMsg(role, text) {
   log.appendChild(m); log.scrollTop = log.scrollHeight;
   return m;
 }
-// True when the chat log is scrolled to (or near) the bottom. Used so live
+// True when a chat log is scrolled to (or near) the bottom. Used so live
 // streaming only auto-scrolls when the user is already following along — if they
 // scrolled up to re-read something, incoming tokens won't yank them back down.
-function chatNearBottom() {
-  const log = $("#chatLog");
+// Defaults to the main chat log; pass another element to reuse for card chat.
+function chatNearBottom(log) {
+  log = log || $("#chatLog");
   if (!log) return true;
   return log.scrollHeight - log.scrollTop - log.clientHeight < 80;
 }
@@ -825,10 +826,15 @@ function handleCardEvent(ev) {
   if (ev.kind === "tool") {
     $("#dtChatStatus").textContent = "调查中…" + (ev.name ? "（" + ev.name + "）" : "");
   } else if (ev.kind === "text" && ev.text) {
+    // Capture intent BEFORE mutating the bubble: only follow the stream if the
+    // user is already at the bottom, so reading scrolled-up text isn't disrupted
+    // (mirrors the main chat's scroll-aware streaming).
+    const log = $("#dtChatLog");
+    const stick = chatNearBottom(log);
     b.classList.remove("typing");
     b._stream = ev.text;
     b.innerHTML = mdToHtml(stripCardMarkers(ev.text));
-    $("#dtChatLog").scrollTop = $("#dtChatLog").scrollHeight;
+    if (stick && log) log.scrollTop = log.scrollHeight;
   }
 }
 async function cardChatSend() {
