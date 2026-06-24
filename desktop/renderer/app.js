@@ -244,14 +244,23 @@ function show(view) {
   if (RESTORABLE_VIEWS.includes(view)) { try { localStorage.setItem("activeView", view); } catch {} }
   $$(".view").forEach((v) => v.classList.toggle("active", v.dataset.view === view));
   $$(".nav-item").forEach((n) => n.classList.toggle("active", n.dataset.view === view));
-  if (view === "chat") { renderChat(); focusComposer(); }
-  if (view === "board") renderBoard();
-  if (view === "schedule") renderSchedule();
-  if (view === "agents") renderAgents();
-  if (view === "skills") renderSkills();
-  if (view === "runs") renderRuns();
-  if (view === "objectives") renderObjectives();
-  if (view === "usage") renderUsage();
+  if (view === "chat") { safeRender(renderChat, "对话"); focusComposer(); }
+  if (view === "board") safeRender(renderBoard, "看板");
+  if (view === "schedule") safeRender(renderSchedule, "定时");
+  if (view === "agents") safeRender(renderAgents, "员工");
+  if (view === "skills") safeRender(renderSkills, "技能");
+  if (view === "runs") safeRender(renderRuns, "运行记录");
+  if (view === "objectives") safeRender(renderObjectives, "目标循环");
+  if (view === "usage") safeRender(renderUsage, "用量");
+}
+// Run a (possibly async) view renderer without letting a single failed IPC/render
+// blank the view or surface as an unhandled rejection: log it and tell the user
+// the view failed to load (each view re-fetches on next open, so this recovers).
+function safeRender(fn, label) {
+  Promise.resolve().then(fn).catch((e) => {
+    console.error(`${label}视图渲染失败`, e);
+    toast(`${label}加载失败，请稍后重试。`, "error", 6000);
+  });
 }
 
 async function refreshIdeas() {
