@@ -128,7 +128,14 @@ code { background: var(--surface-3); padding: 2px 7px; border-radius: 5px; font-
 .chat-sessions { width: 244px; flex-shrink: 0; background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
 .chat-layout.side-right .chat-sessions { border-right: none; border-left: 1px solid var(--line); }
 .chat-head .icon-btn svg { width: 17px; height: 17px; }
-.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+/* "jump to latest" — appears only when the user scrolls up away from the bottom
+   (streaming respects scroll position, so this is the way back to live tokens). */
+.chat-jump { position: absolute; right: 22px; bottom: 104px; z-index: 5; display: none; align-items: center; gap: 6px; padding: 7px 13px 7px 11px; background: var(--card); border: 1px solid var(--line-2); border-radius: 999px; color: var(--accent); font-size: 12.5px; font-weight: 600; cursor: pointer; box-shadow: var(--shadow-sm); transition: .12s; }
+.chat-jump[hidden] { display: none; }
+.chat-jump.show { display: inline-flex; }
+.chat-jump:hover { border-color: var(--accent); background: var(--accent-soft); }
+.chat-jump svg { width: 15px; height: 15px; }
 .new-session-btn { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 14px 14px 6px; padding: 10px; background: var(--card); border: 1px solid var(--line-2); border-radius: var(--r-sm); color: var(--text); font-weight: 600; font-size: 13px; cursor: pointer; transition: .12s; }
 .new-session-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .new-session-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
@@ -302,6 +309,8 @@ textarea.tall { min-height: 120px; }
 .skill-card-desc { color: var(--muted); font-size: 12px; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .skill-badge { flex-shrink: 0; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
 
+.skill-empty { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 8px 2px; }
+
 .skills-detail-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .skills-detail .run-report { max-height: calc(100vh - 200px); }
 
@@ -412,12 +421,20 @@ textarea.tall { min-height: 120px; }
 .md p { margin: 0 0 10px; }
 .md ul, .md ol { margin: 6px 0 12px; padding-left: 22px; }
 .md li { margin: 4px 0; }
+.md li.md-task { list-style: none; margin-left: -18px; display: flex; align-items: flex-start; gap: 7px; }
+.md li.md-task input { margin: 3px 0 0; flex: none; }
 .md strong { font-weight: 700; }
 .md a { color: var(--accent); }
 .md code { background: var(--surface-3); padding: 1.5px 6px; border-radius: 5px; font-family: var(--mono); font-size: 12px; }
 .md pre.md-code { background: #0f1117; color: #e6e7ee; border-radius: var(--r-sm); padding: 13px 15px; margin: 10px 0; overflow-x: auto; }
 .md pre.md-code code { background: none; padding: 0; color: inherit; font-size: 12px; line-height: 1.55; }
+.md-codewrap { position: relative; }
+.md-copy { position: absolute; top: 9px; right: 9px; padding: 3px 9px; font-size: 11px; line-height: 1.3; border-radius: 6px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.08); color: #cfd2de; cursor: pointer; opacity: 0; transition: opacity .15s, background .15s; }
+.md-codewrap:hover .md-copy, .md-copy:focus { opacity: 1; }
+.md-copy:hover { background: rgba(255,255,255,.16); }
+.md-copy.done { color: #7ee0a8; border-color: rgba(126,224,168,.4); opacity: 1; }
 .md blockquote { border-left: 3px solid var(--line-2); margin: 8px 0; padding: 2px 0 2px 13px; color: var(--muted); }
+.md hr { border: 0; border-top: 1px solid var(--line-2); margin: 16px 0; }
 .md table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 13px; }
 .md th, .md td { border: 1px solid var(--line-2); padding: 7px 11px; text-align: left; vertical-align: top; }
 .md th { background: var(--surface-2); font-weight: 700; }
