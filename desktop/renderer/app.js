@@ -92,13 +92,17 @@ function mdToHtml(src) {
   // <code> span: split on those (capturing-group keeps them at odd indices) and
   // only linkify the plain-text segments. Trailing punctuation is peeled so
   // "(see http://x)" / "http://x." link cleanly.
+  // esc() only neutralizes & < >, so a URL may still carry a literal " (or ')
+  // that would break out of the double-quoted href and inject an attribute
+  // (e.g. onmouseover=). Percent-encode those before they reach the attribute.
+  const hrefAttr = (u) => u.replace(/"/g, "%22").replace(/'/g, "%27");
   const linkifyBare = (s) => s
     .split(/(<a\b[^>]*>.*?<\/a>|<code>.*?<\/code>)/g)
     .map((seg, i) => (i % 2 ? seg : seg.replace(/https?:\/\/[^\s<]+/g, (m) => {
       let url = m, tail = "";
       const tm = url.match(/[.,;:!?)\]'"]+$/);
       if (tm) { tail = tm[0]; url = url.slice(0, -tail.length); }
-      return `<a href="${url}" target="_blank">${url}</a>` + tail;
+      return `<a href="${hrefAttr(url)}" target="_blank" rel="noopener noreferrer">${url}</a>` + tail;
     })))
     .join("");
   const inline = (s) => linkifyBare(s
@@ -108,7 +112,7 @@ function mdToHtml(src) {
     // GitHub-style strikethrough: ~~text~~ → <del>. LLM reports use it to mark
     // dropped/superseded items; otherwise it renders as literal tildes.
     .replace(/~~([^~\n]+)~~/g, "<del>$1</del>")
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank">$1</a>'));
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, (_, txt, u) => `<a href="${hrefAttr(u)}" target="_blank" rel="noopener noreferrer">${txt}</a>`));
   const lines = text.split("\n");
   const codeRe = new RegExp("^" + Z + "\\d+" + Z + "$");
   let html = "", list = null;
@@ -285,7 +289,12 @@ function bindChat() {
   // Persist the unsent draft so a reload/crash/navigation never loses what was typed.
   ta.addEventListener("input", () => { autoGrow(); saveChatDraft(); });
   restoreChatDraft();
-  $("#newSession").onclick = async () => { await api.ceoSessionCreate(); await renderChat(); focusComposer(); };
+  $("#newSession").onclick = async () => {
+    // Mirror switchSession/delete: a flaky IPC must surface as a toast, not a
+    // silent unhandled rejection that makes the "新对话" button look dead.
+    try { await api.ceoSessionCreate(); await renderChat(); focusComposer(); }
+    catch (err) { console.error("新建对话失败", err); toast("新建对话失败，请稍后重试。", "error"); }
+  };
   $("#chatPanelToggle").onclick = () => {
     const c = localStorage.getItem("chatPanelCollapsed") === "1";
     localStorage.setItem("chatPanelCollapsed", c ? "0" : "1");
@@ -377,8 +386,10 @@ function sessionItem(x, activeId) {
   it.querySelector(".si-del").onclick = async (e) => {
     e.stopPropagation();
     if (!confirm("删除这个对话？")) return;
-    await api.ceoSessionDelete(x.id);
-    await renderChat();
+    // A flaky IPC must surface as a toast, not a silent unhandled rejection that
+    // leaves the just-clicked item looking like it did nothing.
+    try { await api.ceoSessionDelete(x.id); await renderChat(); }
+    catch (err) { console.error("删除对话失败", err); toast("删除对话失败，请稍后重试。", "error"); }
   };
   return it;
 }
@@ -388,8 +399,8 @@ async function switchSession(id) {
   // live ticker and would swallow this hint within ~1s, so the user would never
   // learn why their click was ignored.
   if (chatInflight) { toast("等 Elon 回完这条再切换对话", "warn"); return; }
-  await api.ceoSessionSet(id);
-  await renderChat();
+  try { await api.ceoSessionSet(id); await renderChat(); }
+  catch (err) { console.error("切换对话失败", err); toast("切换对话失败，请稍后重试。", "error"); }
 }
 async function renderSessions() {
   const s = await api.ceoSessions();
@@ -512,7 +523,10 @@ async function chatSend() {
   const sendHistory = chatHistory.slice();
   addMsg("user", msg);
   chatHistory.push({ role: "user", text: msg });
-  await api.ceoSaveHistory(chatHistory);
+  // Persisting the just-typed message is best-effort: a transient IPC hiccup here
+  // must NOT abort the whole turn (which would leave the message shown but never
+  // answered, with no feedback). Log and proceed — the post-turn save re-persists.
+  try { await api.ceoSaveHistory(chatHistory); } catch (e) { console.error("保存对话历史失败（不影响本次回复）", e); }
 
   const statusLabel = chatMode === "task" ? "拟计划中" : "思考中";
   const thinking = chatMode === "task" ? "Elon 正在拟执行文档…" : "Elon 正在思考…";
@@ -1140,8 +1154,18 @@ function bindSchedule() {
   $("#autoCard").onchange = saveAuto;
   $("#autoRunNow").onclick = async () => {
     const btn = $("#autoRunNow"); btn.disabled = true; btn.textContent = "派活中…";
-    const r = await api.runScheduleNow();
-    btn.disabled = false; btn.textContent = "▶ 立即跑一次";
+    let r;
+    try {
+      r = await api.runScheduleNow();
+    } catch (err) {
+      // A transient IPC failure must not leave the button stuck on "派活中…"
+      // (disabled) forever — surface it and let the user retry.
+      console.error("runScheduleNow failed", err);
+      toast("派活失败，请稍后重试。", "error", 7000);
+      return;
+    } finally {
+      btn.disabled = false; btn.textContent = "▶ 立即跑一次";
+    }
     // Use the app's toast instead of a blocking alert() (consistent with every
     // other error path here, and doesn't freeze the UI thread).
     if (r && !r.ok && r.error) toast(r.error, "error", 7000);
@@ -1325,8 +1349,18 @@ let skillCat = "all";
 function bindSkills() {
   $("#skillsSync").onclick = async () => {
     const btn = $("#skillsSync"); btn.disabled = true; const t = btn.textContent; btn.textContent = "同步中…";
-    const r = await api.skillsSync();
-    btn.disabled = false; btn.textContent = t;
+    let r;
+    try {
+      r = await api.skillsSync();
+    } catch (err) {
+      // A transient IPC failure must not leave the button stuck on "同步中…"
+      // (disabled) forever — surface it and let the user retry.
+      console.error("skillsSync failed", err);
+      toast("同步技能失败，请稍后重试。", "error", 7000);
+      return;
+    } finally {
+      btn.disabled = false; btn.textContent = t;
+    }
     toast(`已同步 ${r && r.count != null ? r.count : 0} 个技能`, "info");
     await renderSkills();
   };
