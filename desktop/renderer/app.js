@@ -710,14 +710,26 @@ function ideaCard(it) {
   return card;
 }
 async function confirmIdea(id) {
-  if (detailIdeaId === id && detailDocDirty) await saveDetailDoc();
-  await api.ideaConfirm(id);
-  await refreshIdeas();
+  try {
+    if (detailIdeaId === id && detailDocDirty) await saveDetailDoc();
+    await api.ideaConfirm(id);
+  } catch (err) {
+    console.error("confirmIdea failed", err);
+    toast("确认失败，请稍后重试。", "error");
+  } finally {
+    await refreshIdeas();
+  }
 }
 async function execIdea(id) {
-  if (detailIdeaId === id && detailDocDirty) await saveDetailDoc();
-  await api.ideaExecute(id);
-  await refreshIdeas();
+  try {
+    if (detailIdeaId === id && detailDocDirty) await saveDetailDoc();
+    await api.ideaExecute(id);
+  } catch (err) {
+    console.error("execIdea failed", err);
+    toast("执行失败，请稍后重试。", "error");
+  } finally {
+    await refreshIdeas();
+  }
 }
 async function stopIdea(it) {
   const cancelled = it.projectId ? await api.cancelCrew(it.projectId) : false;
@@ -1430,8 +1442,15 @@ async function openSkill(id) {
   $("#skillsDetail").classList.remove("hidden");
   $("#skillBadge").textContent = meta ? (meta.source || "") : "";
   $("#skillView").innerHTML = '<div class="muted">加载中…</div>';
-  const sk = await api.skillsGet(id);
-  if (!sk) { $("#skillView").innerHTML = "（读取失败）"; return; }
+  let sk;
+  try {
+    sk = await api.skillsGet(id);
+  } catch (err) {
+    console.error("读取技能详情失败", err);
+    $("#skillView").innerHTML = '<div class="muted">读取技能失败，请稍后重试。</div>';
+    return;
+  }
+  if (!sk) { $("#skillView").innerHTML = '<div class="muted">（读取失败）</div>'; return; }
   const body = sk.content.replace(/^---\n[\s\S]*?\n---\n?/, "");   // strip frontmatter
   let files = "";
   if (sk.files && sk.files.length) {
